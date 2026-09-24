@@ -11,6 +11,8 @@
 *.mp4
 *.mkv
 !demo/test_720p.mp4
+!extension/assets/pq_ramp.mp4
+!extension/assets/hlg_ramp.mp4
 
 **/__pycache__/
 **/*_cache/

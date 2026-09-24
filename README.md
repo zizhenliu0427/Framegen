@@ -38,6 +38,11 @@ with fixes I needed on macOS and bilibili. Everything else is upstream.
 - **Full refresh** toggle: Match display at 100% of the panel rate instead of 97% (off by default) ([#18](https://github.com/MONZikWasTaken/Framegen/issues/18))
 - **4K canvas** toggle: lifts the 1920x1080 canvas cap up to the source resolution (off by default) ([#12](https://github.com/MONZikWasTaken/Framegen/issues/12))
 - **HDR full-screen fix** (macOS only, on by default): keeps SDR→HDR correct when the video fills the screen ([#19](https://github.com/MONZikWasTaken/Framegen/issues/19))
+- **HDR video** option for native HDR sources (PQ/HLG) on an HDR display ([#15](https://github.com/MONZikWasTaken/Framegen/issues/15)).
+  Chrome only hands extensions a grey, SDR-tonemapped frame, which looks overexposed next to the native HDR video.
+  - *Show original* (default): leave native HDR video alone
+  - *Gentle HDR* / *Real HDR* (experimental): measure Chrome's curve with a bundled PQ/HLG ramp, then map back to nits.
+    Colors won't fully match the original, and dense bright detail can flicker while interpolating.
 
 Install: `chrome://extensions` → Developer mode → Load unpacked → select the `extension` folder.
 

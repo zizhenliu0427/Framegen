@@ -38,7 +38,7 @@
   const MODELS = { v6: 'rt_tfact2', v7s: 'rt_v7s' };
   const FPS_LIMIT_STEPS = Profiles.FPS_LIMIT_PRESETS;
   const cfg = { factor: 'auto', targetFps: 120, fpsLimit: null, anime: true, debug: false, res: 480, hoverReveal: true, compare: false,
-    fg: true, sr: false, hdr: false, canvas4k: false, macHdrFix: true, fillDisplay: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
+    fg: true, sr: false, hdr: false, canvas4k: false, macHdrFix: true, fillDisplay: false, nativeHdr: 'original', nativeHdrGain: 1, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
   function sanitizeCfg() {
     const legacyTarget = cfg.factor === 'fps60' ? 60 : cfg.factor === 'fps120' ? 120 : null;
     cfg.factor = Cadence.sanitizeOutputRate(cfg.factor);
@@ -50,6 +50,9 @@
     cfg.anime = !!cfg.anime; cfg.debug = !!cfg.debug;
     cfg.hoverReveal = !!cfg.hoverReveal; cfg.compare = !!cfg.compare;
     cfg.fg = !!cfg.fg; cfg.sr = !!cfg.sr; cfg.hdr = !!cfg.hdr; cfg.canvas4k = !!cfg.canvas4k; cfg.macHdrFix = cfg.macHdrFix !== false; cfg.fillDisplay = !!cfg.fillDisplay;
+    if (!['off', 'original', 'fix', 'real'].includes(cfg.nativeHdr)) cfg.nativeHdr = 'original';
+    if (![0.7, 0.85, 1, 1.2, 1.4].includes(Number(cfg.nativeHdrGain))) cfg.nativeHdrGain = 1;
+    cfg.nativeHdrGain = Number(cfg.nativeHdrGain);
     cfg.showFps = !!cfg.showFps; cfg.showWatermark = cfg.showWatermark !== false;
     cfg.showWarnings = cfg.showWarnings !== false; cfg.guard = !!cfg.guard;
   }
@@ -112,6 +115,8 @@
       }
       if (previousCompare && !cfg.compare) cmpRing = [];
       if ('hdr' in ch || 'sharpness' in ch) configureOverlay();
+      if ('nativeHdr' in ch && running) applyNativeHdr();
+      else if ('nativeHdrGain' in ch && running) configureOverlay();
       if ('sr' in ch && cfg.sr && device) ensureSR().catch(e => log('sr sync', e));
       if (['fg', 'sr', 'hdr', 'sharpness', 'compare'].some(key => Object.hasOwn(ch, key))) {
         reconcilePresentationMode(previousNeedsCanvas, previousSr !== cfg.sr);
@@ -512,19 +517,49 @@
     syncRateSlider();
     resolution.value = String(cfg.res);
     syncCustomSelect(resolution);
+    const nativeHdr = panel.querySelector('#fcNativeHdr');
+    nativeHdr.value = cfg.nativeHdr;
+    syncCustomSelect(nativeHdr);
+    const nativeHdrGain = panel.querySelector('#fcNativeHdrGain');
+    nativeHdrGain.value = String(cfg.nativeHdrGain);
+    syncCustomSelect(nativeHdrGain);
     panel.querySelector('#fcFG').checked = cfg.fg;
     panel.querySelector('#fcSR').checked = cfg.sr;
     panel.querySelector('#fc4K').checked = cfg.canvas4k;
     panel.querySelector('#fcFill').checked = cfg.fillDisplay;
     panel.querySelector('#fcMacHdr').checked = cfg.macHdrFix;
-    panel.querySelector('#fcMacHdrRow').style.display = IS_MAC ? '' : 'none';
     panel.querySelector('#fcShowFps').checked = cfg.showFps;
     panel.querySelector('#fcWatermark').checked = cfg.showWatermark;
     panel.querySelector('#fcWarnings').checked = cfg.showWarnings;
     const hd = panel.querySelector('#fcHDR');
     hd.checked = cfg.hdr;
     if (!sys.hdrOk) { hd.disabled = true; hd.style.opacity = '.35'; }
+    syncHdrRows();
     syncPanelProfileSelection();
+  }
+
+  // HDR-only rows are greyed out unless they can do something: the HDR video
+  // options need a native PQ/HLG source on an HDR display (brightness only matters
+  // for the experimental modes), and the full-screen fix is macOS-only.
+  function currentHdrSource() {
+    if (running && nativeHdrSource !== undefined) return nativeHdrSource;
+    const v = running ? videoEl
+      : (uiVideo || biggestVideo() || videoEl || document.querySelector('video'));
+    return v && v.readyState >= 2 ? sourceTransfer(v) : null;
+  }
+  function setRowEnabled(control, enabled) {
+    control.disabled = !enabled;
+    if (control.tagName === 'SELECT') syncCustomSelect(control);
+    const row = control.closest('.fc-row');
+    if (row) row.style.opacity = enabled ? '' : '.4';
+  }
+  function syncHdrRows() {
+    if (!panel) return;
+    const hdrSource = sys.hdrOk && !!currentHdrSource();
+    setRowEnabled(panel.querySelector('#fcNativeHdr'), hdrSource);
+    setRowEnabled(panel.querySelector('#fcNativeHdrGain'),
+      hdrSource && (cfg.nativeHdr === 'fix' || cfg.nativeHdr === 'real'));
+    setRowEnabled(panel.querySelector('#fcMacHdr'), IS_MAC);
   }
 
   let rt = null, rtRes = 0, rtModel = '', rtGuard = null, rtGeneration = 0;
@@ -1994,13 +2029,170 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
   o.uv = vec2(p[i].x * 0.5 + 0.5, 0.5 - p[i].y * 0.5);
   return o;
 }`;
+  // ---------- native HDR sources (PQ) ----------
+  // Chrome only ever hands copyExternalImageToTexture an SDR-tonemapped frame, and
+  // for PQ video that frame is grey (shadows lifted, highlights squashed), which
+  // shows up as overexposure next to the native HDR video on an HDR display.
+  // A bundled PQ ramp measures Chrome's actual curve once, so the present pass can
+  // undo it: 'real' goes all the way back to nits on the fp16 canvas, 'fix' does the
+  // same with the highlights compressed to a gentle 4x peak, 'original' leaves the
+  // native video alone, 'off' keeps the old behaviour.
+  let nativeHdrSource; // undefined = not checked yet for this stream, else 'pq' | 'hlg' | null
+  // per transfer: lut = Float32Array(256) mapping Chrome's 8-bit value -> nits
+  const hdrCurves = { pq: { lut: null, state: 'idle' }, hlg: { lut: null, state: 'idle' } };
+  const HDR_RAMPS = { pq: 'assets/pq_ramp.mp4', hlg: 'assets/hlg_ramp.mp4' };
+  let resumeAfterCalibration = null; // video FG was paused on while the curve was measured
+  const PQ_M1 = 0.1593017578125, PQ_M2 = 78.84375;
+  const PQ_C1 = 0.8359375, PQ_C2 = 18.8515625, PQ_C3 = 18.6875;
+  const pqToNits = e => {
+    const p = Math.pow(Math.max(e, 0), 1 / PQ_M2);
+    return 10000 * Math.pow(Math.max(p - PQ_C1, 0) / (PQ_C2 - PQ_C3 * p), 1 / PQ_M1);
+  };
+  // HLG (BT.2100) on a neutral ramp: inverse OETF, then the 1000-nit reference
+  // display OOTF (system gamma 1.2). 75% signal lands on 203 nits (BT.2408).
+  const hlgToNits = e => {
+    const a = 0.17883277, b = 0.28466892, c = 0.55991073;
+    const scene = e <= 0.5 ? e * e / 3 : (Math.exp((e - c) / a) + b) / 12;
+    return 1000 * Math.pow(Math.max(scene, 0), 1.2);
+  };
+  const HDR_SIGNAL_TO_NITS = { pq: pqToNits, hlg: hlgToNits };
+  function sourceTransfer(v) {
+    try {
+      const frame = new VideoFrame(v);
+      const transfer = frame.colorSpace?.transfer || null;
+      frame.close();
+      return transfer === 'pq' || transfer === 'hlg' ? transfer : null;
+    } catch { return null; }
+  }
+  async function measureHdrCurve(transfer) {
+    const curve = hdrCurves[transfer];
+    if (!curve || curve.state !== 'idle' || !device) return;
+    curve.state = 'measuring';
+    let objectUrl = null, tex = null, buf = null;
+    try {
+      // blob: URL keeps the probe video same-origin, so its pixels stay readable
+      const blob = await (await fetch(chrome.runtime.getURL(HDR_RAMPS[transfer]))).blob();
+      objectUrl = URL.createObjectURL(blob);
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = objectUrl;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('ramp load timeout')), 4000);
+        v.onloadeddata = () => { clearTimeout(timer); resolve(); };
+        v.onerror = () => { clearTimeout(timer); reject(new Error('ramp decode failed')); };
+      });
+      // loadeddata alone is not enough on real sites (VideoFrame: "Invalid source
+      // state"): seek to an explicit frame and wait until it is presentable
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 3000);
+        v.onseeked = () => { clearTimeout(timer); resolve(); };
+        v.currentTime = 0.25;
+      });
+      if (sourceTransfer(v) !== transfer) throw new Error(`ramp not decoded as ${transfer}`);
+      const w = v.videoWidth, h = v.videoHeight;
+      tex = device.createTexture({ size: [w, h], format: 'rgba8unorm',
+        usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
+      device.queue.copyExternalImageToTexture({ source: v }, { texture: tex }, [w, h]);
+      const bytesPerRow = Math.ceil(w * 4 / 256) * 256;
+      buf = device.createBuffer({ size: bytesPerRow, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      const enc = device.createCommandEncoder();
+      enc.copyTextureToBuffer({ texture: tex, origin: [0, h >> 1] }, { buffer: buf, bytesPerRow }, [w, 1]);
+      device.queue.submit([enc.finish()]);
+      await buf.mapAsync(GPUMapMode.READ);
+      const row = new Uint8Array(buf.getMappedRange().slice(0));
+      buf.unmap();
+      // ramp column x carries signal x/w; collect nits per observed 8-bit value
+      const toNits = HDR_SIGNAL_TO_NITS[transfer];
+      const sums = new Float64Array(256), counts = new Uint32Array(256);
+      for (let x = 0; x < w; x++) {
+        const k = row[x * 4 + 1]; // green: neutral ramp, least chroma-subsampling error
+        sums[k] += toNits((x + 0.5) / w); counts[k]++;
+      }
+      const known = [];
+      for (let k = 0; k < 256; k++) if (counts[k]) known.push([k, sums[k] / counts[k]]);
+      if (known.length < 16) throw new Error('ramp too flat: ' + known.length + ' levels');
+      const lut = new Float32Array(256);
+      for (let k = 0, j = 0; k < 256; k++) {
+        while (j < known.length - 1 && known[j + 1][0] <= k) j++;
+        const [k0, n0] = known[j], [k1, n1] = known[Math.min(j + 1, known.length - 1)];
+        lut[k] = k <= k0 ? (k0 === known[0][0] ? n0 * k / Math.max(1, k0) : n0)
+          : k1 === k0 ? n0 : n0 + (n1 - n0) * (k - k0) / (k1 - k0);
+      }
+      for (let k = 1; k < 256; k++) lut[k] = Math.max(lut[k], lut[k - 1]); // monotonic
+      // smooth in log-nits (+-2 levels): a jagged LUT turns the 1-level wobble of
+      // interpolated pixels into uneven brightness jumps (flicker in dense detail)
+      const logs = Array.from(lut, n => Math.log(Math.max(n, 0.005)));
+      for (let k = 2; k < 254; k++) {
+        lut[k] = Math.exp((logs[k - 2] + logs[k - 1] + logs[k] + logs[k + 1] + logs[k + 2]) / 5);
+      }
+      for (let k = 1; k < 256; k++) lut[k] = Math.max(lut[k], lut[k - 1]);
+      curve.lut = lut;
+      curve.state = 'ready';
+      log('native HDR curve measured', transfer, known.length, 'levels; value->nits',
+        [16, 64, 128, 192, 255].map(k => `${k}:${lut[k].toFixed(1)}`).join(' '));
+    } catch (e) {
+      curve.state = 'failed';
+      log('native HDR curve measurement failed', transfer, '- falling back to original video', e);
+    } finally {
+      if (buf) buf.destroy();
+      if (tex) tex.destroy();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+    if (running) applyNativeHdr();
+    else if (resumeAfterCalibration && curve.state === 'ready' && !toggling) {
+      const v = resumeAfterCalibration;
+      resumeAfterCalibration = null;
+      if (v.isConnected) {
+        toggling = true;
+        try { await start(v); } catch (e) { log('resume after HDR calibration', e); }
+        finally { toggling = false; }
+      }
+    }
+  }
+  // effective handling for the current stream: 'none' | 'off' | 'original' | 'fix' | 'real'
+  function nativeHdrMode() {
+    if (!sys.hdrOk || nativeHdrSource !== 'pq' && nativeHdrSource !== 'hlg') return 'none';
+    const mode = cfg.nativeHdr;
+    if ((mode === 'fix' || mode === 'real') && !hdrCurves[nativeHdrSource].lut) {
+      return hdrCurves[nativeHdrSource].state === 'failed' ? 'original' : 'pending';
+    }
+    return mode;
+  }
+  function applyNativeHdr() {
+    const mode = nativeHdrMode();
+    if ((cfg.nativeHdr === 'fix' || cfg.nativeHdr === 'real') && hdrCurves[nativeHdrSource]
+        && hdrCurves[nativeHdrSource].state === 'idle') measureHdrCurve(nativeHdrSource);
+    if (mode === 'original' || mode === 'pending') {
+      resumeAfterCalibration = mode === 'pending' ? videoEl : null;
+      if (running) setTimeout(() => { if (running) stop(); }, 0);
+      advise(mode === 'pending'
+        ? 'HDR video: calibrating, showing the original for a moment'
+        : 'HDR video: showing the original (Framegen off for this stream)', 4000);
+      return;
+    }
+    configureOverlay();
+  }
+
   // (re)build the present path: SDR passthrough, or HDR via inverse tone mapping -
   // highlights expand past SDR white on an fp16 canvas in extended tone-mapping mode
   // (same idea as RTX Video HDR; the browser only ever hands us tonemapped SDR)
   function configureOverlay() {
     if (!overlayCtx || !device) return;
     const configurationGeneration = ++overlayConfigurationGeneration;
-    let hdr = !!(cfg.hdr && sys.hdrOk);
+    const nh = nativeHdrMode();
+    const hdrLut = (nh === 'fix' || nh === 'real') ? hdrCurves[nativeHdrSource]?.lut : null;
+    const nativeFix = !!hdrLut;
+    // Tuned by eye on a MacBook Pro XDR against native playback: PQ at the 203-nit
+    // BT.2408 reference white looked dim (150 matched), HLG matched at 203. The PQ
+    // curve is soft-limited to 1000 nits: its top 8-bit steps span ~1000-10000
+    // nits, which turns tiny interpolation errors into highlight flicker.
+    // user brightness scales the reference white (brighter = lower white point)
+    const hdrWhite = (nativeHdrSource === 'pq' ? 150 : 203) / cfg.nativeHdrGain;
+    const hdrPeak = 1000;
+    const lutNits = !hdrLut ? null : nativeHdrSource !== 'pq' ? hdrLut : Array.from(hdrLut, n => {
+      const knee = hdrPeak / 2;
+      return n <= knee ? n : knee + (hdrPeak - knee) * (1 - Math.exp(-(n - knee) / (hdrPeak - knee)));
+    });
+    let hdr = !!(sys.hdrOk && (cfg.hdr || nativeFix));
     const fmt = hdr ? 'rgba16float' : 'rgba8unorm';
     try {
       overlayCtx.configure({ device, format: fmt, alphaMode: 'opaque',
@@ -2024,7 +2216,36 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
 fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
   return textureSampleLevel(tex, samp, uv, 0.0).rgb;
 }`;
-    const fs = sampleColor + (hdr ? `
+    // native PQ: Chrome's 8-bit value -> nits via the measured LUT, relative to
+    // 203 nits reference white (1.0 on the extended sRGB canvas)
+    const lutFns = hdr && nativeFix ? `
+var<private> HDR_LUT: array<f32, 256> = array<f32, 256>(${Array.from(lutNits, n => (n / hdrWhite).toFixed(5)).join(', ')});
+fn lutLin(x: f32) -> f32 {
+  let p = clamp(x, 0.0, 1.0) * 255.0;
+  let i = u32(floor(p));
+  let j = min(i + 1u, 255u);
+  return mix(HDR_LUT[i], HDR_LUT[j], p - floor(p));
+}
+fn nativeLin(c: vec3<f32>) -> vec3<f32> {
+  // per channel: luminance-only mapping (keeping Chrome's chroma) looked washed out
+  return vec3(lutLin(c.r), lutLin(c.g), lutLin(c.b));
+}
+// 'fix': the real nits, but highlights only ever compressed (smooth shoulder from
+// 0.8 up to 4x SDR white). Squashing into SDR and re-expanding with the SDR ITM
+// banded and blew out highlights, because the few top 8-bit steps got stretched.
+// (A local gain map cut detail flicker but aliased into a grid and cost ~7ms.)
+fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
+  let y = max(lin.r, max(lin.g, lin.b));
+  if (y <= 0.8) { return lin; }
+  let peak = 4.0;
+  let mapped = 0.8 + (peak - 0.8) * (1.0 - exp(-(y - 0.8) / (peak - 0.8)));
+  return lin * (mapped / y);
+}` : '';
+    const fs = sampleColor + lutFns + (hdr && nativeFix ? `
+@fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
+  let lin = min(nativeLin(sampleColor(v.uv)), vec3(49.0)); // 10000 nits / 203
+  return vec4(pow(${nh === 'fix' ? 'gentleHdr(lin)' : 'lin'}, vec3(1.0 / 2.2)), 1.0);
+}` : hdr ? `
 @fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
   let c = sampleColor(v.uv);
   let lin = pow(max(c, vec3(0.0)), vec3(2.2));
@@ -3194,6 +3415,12 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       schedT = (!schedT || Math.abs(arrival - expected) > 80)
         ? arrival : expected + 0.08 * (arrival - expected);
       if (!videoEl.videoWidth || !videoEl.videoHeight) return;
+      if (nativeHdrSource === undefined) { // once per stream: PQ/HLG needs its own present path
+        nativeHdrSource = sourceTransfer(videoEl);
+        log('source transfer', nativeHdrSource || 'sdr', '- HDR video mode', cfg.nativeHdr);
+        applyNativeHdr();
+        syncHdrRows();
+      }
       const [vw, vh] = poolDims();
       // presentation delay must cover the batch compute time (own + the previous
       // batch draining), or high factors drop their early mids as already-stale.
@@ -3646,6 +3873,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
   }
 
   function onSrcChange() {
+    nativeHdrSource = undefined;
     resetAutoController();
     resetOutputCadence(true);
     delayMs = DELAY_MS;
@@ -3687,6 +3915,10 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
     if (running && videoEl === v) return; // re-entry insurance: never double-arm the rVFC/rAF loops
     running = false;
     const startEpoch = invalidatePlaybackLoops();
+    nativeHdrSource = undefined;
+    for (const curve of Object.values(hdrCurves)) { // each FG start may retry calibration
+      if (curve.state === 'failed') curve.state = 'idle';
+    }
     videoEl = v;
     trackSourceVideo(v);
     delayMs = DELAY_MS;
@@ -3940,7 +4172,22 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
         <input class="fc-sw" type="checkbox" id="fcSR"></label>
       <label class="fc-row"><span>HDR<small>Brighter highlights on HDR displays</small></span>
         <input class="fc-sw" type="checkbox" id="fcHDR"></label>
-      <label class="fc-row" id="fcMacHdrRow"><span>HDR full-screen fix<small>Mac: keeps HDR correct in full screen</small></span>
+      <div class="fc-row"><span>HDR video<small>Native HDR sources on an HDR display</small></span>
+        <select class="fc-sel" id="fcNativeHdr">
+          <option value="original">Show original</option>
+          <option value="fix">Gentle HDR (experimental)</option>
+          <option value="real">Real HDR (experimental)</option>
+          <option value="off">Off (as before)</option>
+        </select></div>
+      <div class="fc-row"><span>HDR brightness<small>For the experimental HDR video modes</small></span>
+        <select class="fc-sel" id="fcNativeHdrGain">
+          <option value="0.7">Dim</option>
+          <option value="0.85">Slightly dim</option>
+          <option value="1">Normal</option>
+          <option value="1.2">Bright</option>
+          <option value="1.4">Brighter</option>
+        </select></div>
+      <label class="fc-row"><span>HDR full-screen fix<small>Mac: keeps HDR correct in full screen</small></span>
         <input class="fc-sw" type="checkbox" id="fcMacHdr"></label>
       <label class="fc-row"><span>4K canvas<small>Keep up to 4K sharpness · more GPU</small></span>
         <input class="fc-sw" type="checkbox" id="fc4K"></label>
@@ -3994,6 +4241,15 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       cfg.sr = Sr.checked; saveCfg();
       if (cfg.sr && device) ensureSR().catch(e => log('sr', e));
       reconcilePresentationMode(previousNeedsCanvas, true);
+    };
+    panel.querySelector('#fcNativeHdr').onchange = event => {
+      cfg.nativeHdr = event.currentTarget.value; saveCfg();
+      syncHdrRows();
+      if (running) applyNativeHdr();
+    };
+    panel.querySelector('#fcNativeHdrGain').onchange = event => {
+      cfg.nativeHdrGain = Number(event.currentTarget.value); saveCfg();
+      if (running) configureOverlay();
     };
     panel.querySelector('#fcFill').onchange = event => {
       cfg.fillDisplay = event.currentTarget.checked; saveCfg();
