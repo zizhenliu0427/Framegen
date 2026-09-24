@@ -27,6 +27,20 @@ HUD - recorded at 60 fps on an RTX 4060 Ti.
 
 </div>
 
+## About this fork
+
+Personal fork of [MONZikWasTaken/Framegen](https://github.com/MONZikWasTaken/Framegen)
+with fixes I needed on macOS and bilibili. Everything else is upstream.
+
+- **ProMotion / slightly-slow panels**: a 120Hz panel measured at ~118-119Hz keeps
+  its nominal 120Hz capacity, so 60fps video still gets 2x ([#16](https://github.com/MONZikWasTaken/Framegen/issues/16))
+- **Dark Reader**: player UI lives in a closed shadow root so page restylers can't recolor it ([#17](https://github.com/MONZikWasTaken/Framegen/issues/17))
+- **Full refresh** toggle: Match display at 100% of the panel rate instead of 97% (off by default) ([#18](https://github.com/MONZikWasTaken/Framegen/issues/18))
+- **4K canvas** toggle: lifts the 1920x1080 canvas cap up to the source resolution (off by default) ([#12](https://github.com/MONZikWasTaken/Framegen/issues/12))
+- **HDR full-screen fix** (macOS only, on by default): keeps SDR→HDR correct when the video fills the screen ([#19](https://github.com/MONZikWasTaken/Framegen/issues/19))
+
+Install: `chrome://extensions` → Developer mode → Load unpacked → select the `extension` folder.
+
 ## What it does
 
 - **2×-6× more frames** on any `<video>` - movies, series, sports, anime,

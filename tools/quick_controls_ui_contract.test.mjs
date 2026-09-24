@@ -21,7 +21,7 @@ test('quick controls mount as one morphing surface clipped inside the video', ()
   assert.match(content, /class="fc-controls-stage"[\s\S]*class="fc-control-surface"[\s\S]*class="fc-control-rail"[\s\S]*class="fc-settings-clip"/);
   assert.match(content, /controlsRail\.append\(btn, gear\)/);
   assert.match(content, /controlsClip\.appendChild\(panel\)/);
-  assert.match(content, /document\.body\.append\(controlsRoot, wm, hud\)/);
+  assert.match(content, /uiLayer\(\)\.append\(controlsRoot, wm, hud\)/);
   assert.match(content, /controlsShape\.setAttribute\('d', path\)/);
   assert.match(content, /controlsClip\.style\.clipPath = `path\("\$\{path\}"\)`/);
   assert.match(content, /prefers-reduced-motion: reduce/);
@@ -67,7 +67,11 @@ test('custom selects keep native values, keyboard support, and dynamic profile s
   assert.match(content, /renderPanelProfiles\(\)[\s\S]*rebuildCustomSelect\(select\)/);
   assert.match(content, /syncPanelProfileSelection\(\)[\s\S]*syncCustomSelect\(select\)/);
   assert.match(content, /\.fc-sel\[data-enhanced="true"\]\{display:none!important\}/);
-  assert.doesNotMatch(content, /appearance:base-select|::picker\(|backdrop-filter:/);
+  // The only allowed backdrop-filter is the 1px macOS HDR anchor, which never
+  // covers the video area (see syncHdrAnchor); nothing else may blur the video.
+  const hdrAnchor = functionBody('syncHdrAnchor', 'positionOverlay');
+  assert.match(hdrAnchor, /width:1px; height:1px;/);
+  assert.doesNotMatch(content.replace(hdrAnchor, ''), /appearance:base-select|::picker\(|backdrop-filter:/);
 });
 
 test('quick settings expose no native title tooltips or obsolete brand dot', () => {

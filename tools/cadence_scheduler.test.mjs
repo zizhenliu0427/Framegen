@@ -337,9 +337,11 @@ test('arbitrary targets enforce the 2x source floor and measured display cap', (
   assert.equal(fractional.outputHz, 59.94);
   assert.equal(fractional.clamped, false);
 
+  // A panel measured within NOMINAL_RATE_TOLERANCE of its nominal rate keeps the
+  // nominal capacity, so a 120Hz panel read as 119.88Hz still serves 120.
   const ntscBoundary = resolveTarget(120, 60000 / 1001, 119.88);
   assert.equal(ntscBoundary.state, 'active');
-  assert.equal(ntscBoundary.outputHz, 119.88);
+  assert.equal(ntscBoundary.outputHz, 120);
   assert.equal(ntscBoundary.clampReason, null);
 
   const noRange = resolveTarget(120, 60, 100);
@@ -1338,4 +1340,33 @@ test('extension loads the helper first and exposes every output-rate choice', ()
   assert.ok(content.indexOf('present(queue[due].tex, queue[due].mid)')
     < content.indexOf('// Queue the current canvas blit before future inference'),
   'the current presentation must be queued before future inference work');
+});
+
+test('a 120Hz ProMotion panel measured slightly slow still allows 2x of 60fps', () => {
+  for (const measuredHz of [118.34, 118.96, 119.5]) {
+    const display = Cadence.measureDisplayHz(1000 / measuredHz);
+    assert.equal(display.capacityHz, 120, `${measuredHz}Hz should keep nominal 120 capacity`);
+    const plan = Cadence.resolveOutputRate('hz', 1000 / measuredHz,
+      { sourceHz: 60, sourceReady: true, displayReady: true });
+    assert.equal(plan.state, 'active');
+    assert.equal(plan.outputHz, 120);
+  }
+  // 110Hz is more than 3% off 120 and must never be treated as 120.
+  assert.equal(Cadence.measureDisplayHz(1000 / 110).capacityHz, 110);
+  const refused = Cadence.resolveOutputRate('hz', 1000 / 110,
+    { sourceHz: 60, sourceReady: true, displayReady: true });
+  assert.equal(refused.state, 'no-2x-display-range');
+});
+
+test('fillDisplay runs display Hz at the full panel rate, off by default', () => {
+  const base = { sourceHz: 60, sourceReady: true, displayReady: true };
+  const reserved = Cadence.resolveOutputRate('hz', 1000 / 240, base);
+  assert.equal(reserved.outputHz, 240 * Cadence.DISPLAY_CLAMP_HEADROOM);
+  const full = Cadence.resolveOutputRate('hz', 1000 / 240, { ...base, fillDisplay: true });
+  assert.equal(full.outputHz, 240);
+  assert.equal(full.clampReason, null);
+  // explicit targets keep their headroom even with fillDisplay
+  const target = Cadence.resolveOutputRate('target', 1000 / 240,
+    { ...base, targetFps: 1000, fillDisplay: true });
+  assert.equal(target.outputHz, 240 * Cadence.DISPLAY_CLAMP_HEADROOM);
 });

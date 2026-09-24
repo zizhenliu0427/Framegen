@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Framegen - Frame Interpolation",
+  "name": "Framegen (fork)",
   "version": "1.4.7",
   "action": {
     "default_title": "Framegen",

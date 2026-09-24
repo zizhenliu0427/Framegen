@@ -313,7 +313,12 @@
       : Math.max(1, Math.round(rawHz * 100) / 100);
     // Keep the friendly nominal rate separate from scheduling capacity. Snapping
     // 110Hz up to a 120Hz label must never authorize 120 presentations/second.
-    const capacityHz = Math.max(1, Math.round(Math.min(rawHz, displayHz) * 100) / 100);
+    // A nominal panel measured slightly slow (e.g. 120Hz ProMotion seen as ~118Hz
+    // through rAF jitter) keeps its nominal capacity; 110Hz never snaps (>3% off).
+    const nearNominal = displayHz === nearest && rawHz >= nearest * (1 - NOMINAL_RATE_TOLERANCE);
+    const capacityHz = nearNominal
+      ? nearest
+      : Math.max(1, Math.round(Math.min(rawHz, displayHz) * 100) / 100);
     return { measured: true, rawHz, displayHz, capacityHz };
   }
 
@@ -483,6 +488,7 @@
     pairCostMs = 0,
     presentationCostMs = 0,
     strictCeiling = false,
+    fillDisplay = false,
   } = {}) {
     const safeMode = sanitizeOutputRate(mode);
     const display = measureDisplayHz(rafFloorMs);
@@ -570,13 +576,15 @@
     // hitch. Never let that reserve violate the strict 2x source floor.
     const headroomDisplayHz = display.capacityHz * DISPLAY_CLAMP_HEADROOM;
     const targetsDisplayCeiling = requestedHz >= display.capacityHz;
-    const useDisplayHeadroom = targetsDisplayCeiling
+    // Optional full-rate Display Hz: without spare vsyncs a hitch drops the stale
+    // mids (selectDuePresentation) instead of replaying them. No repeated frames
+    // on a fixed panel, but hitches become visible skips, so it stays opt-in.
+    const fillsDisplay = fillDisplay && !strictCeiling && safeMode === 'hz';
+    const useDisplayHeadroom = targetsDisplayCeiling && !fillsDisplay
       && (strictCeiling || headroomDisplayHz + toleranceHz >= minimumHz);
     const displayLimitHz = useDisplayHeadroom ? headroomDisplayHz : display.capacityHz;
-    // Display Hz asks for the panel ceiling itself. Use the headroom-adjusted
-    // service target so ordinary rAF hitches can be recovered without reporting
-    // a misleading display clamp. Explicit targets retain their existing clamp
-    // semantics, and strict Auto caps remain strict.
+    // Explicit targets retain their existing clamp semantics, and strict Auto
+    // caps remain strict.
     const adjustedDesiredHz = !strictCeiling && safeMode === 'hz'
       ? displayLimitHz
       : desiredHz;

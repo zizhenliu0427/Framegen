@@ -19,15 +19,16 @@ function functionSource(name) {
   throw new Error(`unterminated function ${name}`);
 }
 
-function evaluatePoolDimensions({ source, backing, sr, f16 }) {
+function evaluatePoolDimensions({ source, backing, sr, f16, canvas4k = false }) {
   const context = {
-    cfg: { sr },
+    cfg: { sr, canvas4k },
     sys: { f16 },
     overlay: { width: backing[0], height: backing[1] },
     videoEl: { videoWidth: source[0], videoHeight: source[1] },
     result: null,
   };
-  vm.runInNewContext(`${functionSource('needsNeuralUpscale')}\n${functionSource('poolDims')}\n`
+  vm.runInNewContext(`${functionSource('needsNeuralUpscale')}\n${functionSource('canvasCap')}\n`
+    + `${functionSource('poolDims')}\n`
     + 'result = Array.from(poolDims());', context);
   return JSON.parse(JSON.stringify(context.result));
 }
@@ -238,4 +239,18 @@ test('FG and SR admission includes interpolation and per-presentation GPU costs'
     'pair prep, two decoded anchors, one generated mid and every SR pass must be charged');
   assert.equal(context.result.burst, 41,
     'active-interval admission must charge one anchor plus every generated mid');
+});
+
+test('4K canvas lifts the pool cap up to the source resolution only', () => {
+  // default: FHD cap
+  assert.deepEqual(evaluatePoolDimensions({
+    source: [3840, 2160], backing: [0, 0], sr: false, f16: true,
+  }), [1920, 1080]);
+  assert.deepEqual(evaluatePoolDimensions({
+    source: [3840, 2160], backing: [0, 0], sr: false, f16: true, canvas4k: true,
+  }), [3840, 2160]);
+  // a 1080p source costs the same with the option on
+  assert.deepEqual(evaluatePoolDimensions({
+    source: [1920, 1080], backing: [0, 0], sr: false, f16: true, canvas4k: true,
+  }), [1920, 1080]);
 });

@@ -38,7 +38,7 @@
   const MODELS = { v6: 'rt_tfact2', v7s: 'rt_v7s' };
   const FPS_LIMIT_STEPS = Profiles.FPS_LIMIT_PRESETS;
   const cfg = { factor: 'auto', targetFps: 120, fpsLimit: null, anime: true, debug: false, res: 480, hoverReveal: true, compare: false,
-    fg: true, sr: false, hdr: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
+    fg: true, sr: false, hdr: false, canvas4k: false, macHdrFix: true, fillDisplay: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
   function sanitizeCfg() {
     const legacyTarget = cfg.factor === 'fps60' ? 60 : cfg.factor === 'fps120' ? 120 : null;
     cfg.factor = Cadence.sanitizeOutputRate(cfg.factor);
@@ -49,7 +49,7 @@
     if (![0, 1, 2, 3].includes(cfg.sharpness)) cfg.sharpness = 0;
     cfg.anime = !!cfg.anime; cfg.debug = !!cfg.debug;
     cfg.hoverReveal = !!cfg.hoverReveal; cfg.compare = !!cfg.compare;
-    cfg.fg = !!cfg.fg; cfg.sr = !!cfg.sr; cfg.hdr = !!cfg.hdr;
+    cfg.fg = !!cfg.fg; cfg.sr = !!cfg.sr; cfg.hdr = !!cfg.hdr; cfg.canvas4k = !!cfg.canvas4k; cfg.macHdrFix = cfg.macHdrFix !== false; cfg.fillDisplay = !!cfg.fillDisplay;
     cfg.showFps = !!cfg.showFps; cfg.showWatermark = cfg.showWatermark !== false;
     cfg.showWarnings = cfg.showWarnings !== false; cfg.guard = !!cfg.guard;
   }
@@ -297,7 +297,7 @@
     });
     menu.addEventListener('keydown', event => {
       const options = [...menu.querySelectorAll('.fc-select-option:not(:disabled)')];
-      const current = options.indexOf(document.activeElement);
+      const current = options.indexOf(activeUiElement());
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault(); event.stopPropagation();
         const step = event.key === 'ArrowDown' ? 1 : -1;
@@ -308,7 +308,7 @@
         options[event.key === 'Home' ? 0 : options.length - 1]?.focus({ preventScroll: true });
       } else if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault(); event.stopPropagation();
-        chooseCustomSelectOption(component, document.activeElement.closest('.fc-select-option'));
+        chooseCustomSelectOption(component, activeUiElement().closest('.fc-select-option'));
       } else if (event.key === 'Escape') {
         event.preventDefault(); event.stopPropagation();
         closeCustomSelect(component, true);
@@ -514,6 +514,10 @@
     syncCustomSelect(resolution);
     panel.querySelector('#fcFG').checked = cfg.fg;
     panel.querySelector('#fcSR').checked = cfg.sr;
+    panel.querySelector('#fc4K').checked = cfg.canvas4k;
+    panel.querySelector('#fcFill').checked = cfg.fillDisplay;
+    panel.querySelector('#fcMacHdr').checked = cfg.macHdrFix;
+    panel.querySelector('#fcMacHdrRow').style.display = IS_MAC ? '' : 'none';
     panel.querySelector('#fcShowFps').checked = cfg.showFps;
     panel.querySelector('#fcWatermark').checked = cfg.showWatermark;
     panel.querySelector('#fcWarnings').checked = cfg.showWarnings;
@@ -887,6 +891,7 @@
       sourceHz: sourceReady ? playbackRate * 1000 / decodedIntervalMs : null,
       sourceReady,
       displayReady: refreshEstimate.ready === true || refreshEstimate.stableSamples >= 10,
+      fillDisplay: cfg.fillDisplay,
     };
     const cappedAuto = cfg.factor === 'auto' && cfg.fpsLimit !== null;
     const requestedTargetFps = cappedAuto && context.sourceHz
@@ -1820,9 +1825,17 @@
   // SR is active and the decoded source is genuinely smaller, preserve the native
   // source pixels so TinySR receives real low-resolution input instead of a frame
   // that was already linearly enlarged to the canvas size.
+  // Canvas safety cap. FHD by default; the 4K canvas option lifts it up to the
+  // source's own resolution (never above UHD), so a 1080p source costs the same
+  // as before and only >1080p sources pay for the extra pixels.
+  function canvasCap(srcW, srcH) {
+    if (!cfg.canvas4k || !srcW || !srcH) return [1920, 1080];
+    return [Math.min(3840, Math.max(1920, srcW)), Math.min(2160, Math.max(1080, srcH))];
+  }
   function poolDims() {
     const fw = videoEl.videoWidth, fh = videoEl.videoHeight;
-    const s = Math.min(1, 1920 / fw, 1080 / fh);
+    const [capW, capH] = canvasCap(fw, fh);
+    const s = Math.min(1, capW / fw, capH / fh);
     const sw = Math.round(fw * s), sh = Math.round(fh * s);
     if (cfg.sr && sys.f16 && needsNeuralUpscale(sw, sh)) return [sw, sh];
     if (overlay?.width && overlay?.height) return [overlay.width, overlay.height];
@@ -2042,6 +2055,28 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       });
     }
   }
+  // All player UI lives in one closed shadow root: page-wide restylers (Dark
+  // Reader and friends) rewrite every stylesheet and inline color they can see,
+  // which turned the dark panel light-on-light. display:contents keeps layout
+  // identical to the old body-level siblings.
+  let uiShadowHost = null, uiShadow = null;
+  function uiLayer() {
+    if (!uiShadow) {
+      uiShadowHost = document.createElement('framegen-ui');
+      uiShadowHost.style.setProperty('display', 'contents', 'important');
+      uiShadow = uiShadowHost.attachShadow({ mode: 'closed' });
+      // keys typed into our controls must not reach site shortcuts, which only
+      // see the host element after retargeting and would not recognize an input
+      for (const type of ['keydown', 'keypress', 'keyup']) {
+        uiShadow.addEventListener(type, event => event.stopPropagation());
+      }
+    }
+    if (!uiShadowHost.isConnected) (document.fullscreenElement || document.body).appendChild(uiShadowHost);
+    return uiShadow;
+  }
+  function activeUiElement() {
+    return uiShadow?.activeElement || document.activeElement;
+  }
   // fullscreen renders in the browser's TOP LAYER: anything not inside the
   // fullscreen element is invisible there. Move the whole UI in (and back out) -
   // fired from the fullscreenchange event too, so it works with the SITE's own
@@ -2049,15 +2084,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
   function reparentUI() {
     const uiHost = document.fullscreenElement || document.body;
     if (uiHost.tagName === 'VIDEO') return; // bare-video fullscreen: nothing can overlay it
-    if (controlsRoot && controlsRoot.parentElement !== uiHost) {
-      uiHost.appendChild(controlsRoot); uiHost.appendChild(hud);
-      if (bar) uiHost.appendChild(bar);
-      if (splitEl) uiHost.appendChild(splitEl);
-      if (warnEl) uiHost.appendChild(warnEl);
-      if (adviseEl) uiHost.appendChild(adviseEl);
-      if (flashEl) uiHost.appendChild(flashEl);
-      if (wm) uiHost.appendChild(wm);
-    }
+    if (uiShadowHost && uiShadowHost.parentElement !== uiHost) uiHost.appendChild(uiShadowHost);
   }
   document.addEventListener('fullscreenchange', () => {
     diag.fullscreenEvents++;
@@ -2080,6 +2107,30 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
     }));
   });
 
+  // macOS: with the video filling the viewport and nothing else changing on
+  // screen, Chrome hands the fp16 extended-range canvas straight to the system
+  // compositor, which shows the ITM output as a flat, uniformly brightened image.
+  // A backdrop-filter over the canvas forces it through Chrome's own compositing
+  // pass (the path windowed playback always takes). Opaque, animated or
+  // drop-shadow overlays did not help; a 1px backdrop blur does, even inside the
+  // letterbox bar (the canvas layer spans the whole video box), so it sits in the
+  // box's bottom-right corner and never touches the picture.
+  const IS_MAC = navigator.userAgentData?.platform === 'macOS' || /Mac/.test(navigator.platform);
+  let hdrAnchor = null;
+  function syncHdrAnchor(r, visible) {
+    if (!visible || !IS_MAC || !cfg.macHdrFix) { if (hdrAnchor) hdrAnchor.style.display = 'none'; return; }
+    if (!hdrAnchor) {
+      hdrAnchor = document.createElement('div');
+      hdrAnchor.style.cssText = 'position:fixed; width:1px; height:1px; pointer-events:none;'
+        + 'z-index:2147483644; backdrop-filter:blur(1px); -webkit-backdrop-filter:blur(1px);';
+      uiLayer().appendChild(hdrAnchor);
+    }
+    const right = Math.min(innerWidth, r.right);
+    const bottom = Math.min(innerHeight, r.bottom);
+    hdrAnchor.style.display = 'block';
+    hdrAnchor.style.left = (right - 2) + 'px';
+    hdrAnchor.style.top = (bottom - 2) + 'px';
+  }
   function positionOverlay(vrIn) { // caller may pass a fresh video rect to save a forced layout
     if (!overlay || !videoEl?.isConnected || !videoEl.parentElement) return;
     if (overlay.parentElement !== videoEl.parentElement) {
@@ -2127,7 +2178,8 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       // cannot also obey the FHD canvas safety cap, so fail open to the raw video.
       bw = sourceWidth;
       bh = sourceHeight;
-      supported = bw <= 1920 && bh <= 1080;
+      const [capW, capH] = canvasCap(sourceWidth, sourceHeight);
+      supported = bw <= capW && bh <= capH;
     } else if (fit !== 'fill' && supported) {
       const sx = bw / sourceWidth, sy = bh / sourceHeight;
       const scale = fit === 'cover' ? Math.max(sx, sy) : Math.min(sx, sy);
@@ -2144,9 +2196,11 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
     }
     const canvasActive = needsCanvasPresentation();
     overlay.style.visibility = supported && canvasActive ? 'visible' : 'hidden';
+    syncHdrAnchor(r, supported && canvasActive && running && sys.hdrOn);
     overlay.style.pointerEvents = supported && canvasActive && videoEl.controls ? 'auto' : 'none';
     if (!supported || !canvasActive) return;
-    const cap = Math.min(1, 1920 / bw, 1080 / bh);
+    const [capW, capH] = canvasCap(videoEl.videoWidth, videoEl.videoHeight);
+    const cap = Math.min(1, capW / bw, capH / bh);
     bw = Math.round(bw * cap);
     bh = Math.round(bh * cap);
     if (overlay.width !== bw || overlay.height !== bh) { overlay.width = bw; overlay.height = bh; }
@@ -2381,7 +2435,8 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
   }
 
   function blurControlsFocus() {
-    if (controlsRoot?.contains(document.activeElement)) document.activeElement.blur();
+    const active = activeUiElement();
+    if (controlsRoot?.contains(active)) active.blur();
   }
 
   function pointInsideRect(x, y, rect) {
@@ -2583,7 +2638,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       <button id="fcMute" class="fc-btn">${svgIcon('vol')}</button>
       <input id="fcVol" class="fc-range" type="range" min="0" max="100" value="100" style="width:60px">
       <button id="fcFull" class="fc-btn">${svgIcon('full')}</button>`;
-    document.body.appendChild(bar);
+    uiLayer().appendChild(bar);
     const q = (id) => bar.querySelector(id);
     // per-button cooldowns: hammering the buttons must never wedge the player
     const guard = (ms) => { let t = 0; return () => {
@@ -2617,7 +2672,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
         + 'color:#fff; font:600 26px system-ui; background:rgba(16,17,20,.85);'
         + 'border-radius:50%; width:72px; height:72px;'
         + 'display:flex; align-items:center; justify-content:center; opacity:0;';
-      document.body.appendChild(flashEl);
+      uiLayer().appendChild(flashEl);
     }
     const r = videoEl.getBoundingClientRect();
     flashEl.innerHTML = sym;
@@ -2715,7 +2770,8 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       splitEl.onpointerup = () => { splitEl.onpointermove = null; splitEl.onpointerup = null; };
       e.preventDefault();
     });
-    (document.fullscreenElement || document.body).appendChild(splitEl);
+    uiLayer().appendChild(splitEl);
+    reparentUI();
   }
 
   // one-shot amber advisory plate (integrated-GPU hint etc.), positioned above warn
@@ -2738,7 +2794,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
         + 'border:1px solid rgba(255,200,90,.35); border-radius:12px; padding:8px 14px;'
         + 'font:12px system-ui; box-shadow:0 4px 20px rgba(0,0,0,.4); max-width:70vw;'
         + 'opacity:0; transition:opacity .25s;';
-      document.body.appendChild(adviseEl);
+      uiLayer().appendChild(adviseEl);
     }
     adviseEl.textContent = text;
     adviseUntil = performance.now() + ms;
@@ -2767,7 +2823,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       + 'font:12px system-ui; box-shadow:0 4px 20px rgba(0,0,0,.4);'
       + 'opacity:0; transform:translateY(-6px); transition:opacity .25s, transform .25s;';
     warnEl.textContent = '⚠ Load too high - lower the factor or switch to auto';
-    document.body.appendChild(warnEl);
+    uiLayer().appendChild(warnEl);
   }
   function updateWarn(now, vr) {
     if (!cfg.showWarnings) {
@@ -3727,6 +3783,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
     }
     hud.style.display = 'none';
     if (wm) wm.style.display = 'none';
+    syncHdrAnchor(null, false);
     if (bar) bar.style.display = 'none';
     hideWarnings();
     if (splitEl) splitEl.style.display = 'none';
@@ -3877,10 +3934,16 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
           <span>15</span><span>60</span><span>120</span><span>240</span><span>∞</span>
         </span>
       </label>
+      <label class="fc-row"><span>Full refresh<small>Match display at 100% · may skip a frame on hitches</small></span>
+        <input class="fc-sw" type="checkbox" id="fcFill"></label>
       <label class="fc-row"><span>Upscale<small>2× neural resolution boost</small></span>
         <input class="fc-sw" type="checkbox" id="fcSR"></label>
       <label class="fc-row"><span>HDR<small>Brighter highlights on HDR displays</small></span>
         <input class="fc-sw" type="checkbox" id="fcHDR"></label>
+      <label class="fc-row" id="fcMacHdrRow"><span>HDR full-screen fix<small>Mac: keeps HDR correct in full screen</small></span>
+        <input class="fc-sw" type="checkbox" id="fcMacHdr"></label>
+      <label class="fc-row"><span>4K canvas<small>Keep up to 4K sharpness · more GPU</small></span>
+        <input class="fc-sw" type="checkbox" id="fc4K"></label>
       <div class="fc-row"><span>Quality<small>Balance detail and GPU load</small></span>
         <select class="fc-sel" id="fcRes">
           <option value="288">Low power</option><option value="360">Efficient</option>
@@ -3931,6 +3994,18 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       cfg.sr = Sr.checked; saveCfg();
       if (cfg.sr && device) ensureSR().catch(e => log('sr', e));
       reconcilePresentationMode(previousNeedsCanvas, true);
+    };
+    panel.querySelector('#fcFill').onchange = event => {
+      cfg.fillDisplay = event.currentTarget.checked; saveCfg();
+      outputRatePlanKey = '';
+    };
+    panel.querySelector('#fcMacHdr').onchange = event => {
+      cfg.macHdrFix = event.currentTarget.checked; saveCfg();
+      if (running) positionOverlay();
+    };
+    panel.querySelector('#fc4K').onchange = event => {
+      cfg.canvas4k = event.currentTarget.checked; saveCfg();
+      if (running) positionOverlay(); // canvas resizes now, pools follow on the next capture
     };
     const Hd = panel.querySelector('#fcHDR');
     Hd.onchange = () => {
@@ -4135,7 +4210,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       .fc-open-settings:hover{background:#22262a;border-color:#50555c}
       .fc-open-settings:focus-visible{outline:2px solid #19c37d;outline-offset:1px}
       .fc-open-settings:disabled{opacity:.55;cursor:wait}`;
-    (document.head || document.documentElement).appendChild(css);
+    uiLayer().appendChild(css);
 
     controlsRoot = document.createElement('div');
     controlsRoot.className = 'fc-controls-root';
@@ -4224,7 +4299,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
     });
     controlsRoot.addEventListener('focusout', () => {
       requestAnimationFrame(() => {
-        if (controlsRoot?.contains(document.activeElement)) return;
+        if (controlsRoot?.contains(activeUiElement())) return;
         setPanelOpen(false);
       });
     });
@@ -4241,7 +4316,7 @@ fn sampleColor(uv: vec2<f32>) -> vec3<f32> {
       setPanelOpen(false);
       setControlsVisible(false);
     });
-    document.body.append(controlsRoot, wm, hud);
+    uiLayer().append(controlsRoot, wm, hud);
   }
 
   // toolbar popup protocol: status snapshot + remote toggle. With all_frames every
