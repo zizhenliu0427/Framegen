@@ -49,5 +49,5 @@ test('native HDR defaults to the original video and the experimental modes are l
   assert.match(content, /nativeHdr: 'original'/);
   assert.match(content, /<option value="fix">Gentle HDR \(experimental\)<\/option>/);
   assert.match(content, /<option value="real">Real HDR \(experimental\)<\/option>/);
-  assert.match(content, /function syncHdrRows\(\)/);
+  assert.match(content, /function syncConditionalRows\(\)/);
 });

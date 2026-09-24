@@ -38,6 +38,9 @@ with fixes I needed on macOS and bilibili. Everything else is upstream.
 - **Full refresh** toggle: Match display at 100% of the panel rate instead of 97% (off by default) ([#18](https://github.com/MONZikWasTaken/Framegen/issues/18))
 - **4K canvas** toggle: lifts the 1920x1080 canvas cap up to the source resolution (off by default) ([#12](https://github.com/MONZikWasTaken/Framegen/issues/12))
 - **HDR full-screen fix** (macOS only, on by default): keeps SDR→HDR correct when the video fills the screen ([#19](https://github.com/MONZikWasTaken/Framegen/issues/19))
+- **Auto-enable** per-site allowlist ([#2](https://github.com/MONZikWasTaken/Framegen/issues/2)): FG turns on by itself for a large, playing video on sites you opted in.
+  Hover previews / mini windows and YouTube ads are skipped unless *Auto: small players* / *Auto: during ads* are on; picture-in-picture never qualifies.
+  A manual off sticks for the current page.
 - **HDR video** option for native HDR sources (PQ/HLG) on an HDR display ([#15](https://github.com/MONZikWasTaken/Framegen/issues/15)).
   Chrome only hands extensions a grey, SDR-tonemapped frame, which looks overexposed next to the native HDR video.
   - *Show original* (default): leave native HDR video alone

@@ -38,7 +38,7 @@
   const MODELS = { v6: 'rt_tfact2', v7s: 'rt_v7s' };
   const FPS_LIMIT_STEPS = Profiles.FPS_LIMIT_PRESETS;
   const cfg = { factor: 'auto', targetFps: 120, fpsLimit: null, anime: true, debug: false, res: 480, hoverReveal: true, compare: false,
-    fg: true, sr: false, hdr: false, canvas4k: false, macHdrFix: true, fillDisplay: false, nativeHdr: 'original', nativeHdrGain: 1, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
+    fg: true, sr: false, hdr: false, canvas4k: false, macHdrFix: true, fillDisplay: false, nativeHdr: 'original', nativeHdrGain: 1, autoSites: [], autoSmall: false, autoAds: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
   function sanitizeCfg() {
     const legacyTarget = cfg.factor === 'fps60' ? 60 : cfg.factor === 'fps120' ? 120 : null;
     cfg.factor = Cadence.sanitizeOutputRate(cfg.factor);
@@ -53,6 +53,9 @@
     if (!['off', 'original', 'fix', 'real'].includes(cfg.nativeHdr)) cfg.nativeHdr = 'original';
     if (![0.7, 0.85, 1, 1.2, 1.4].includes(Number(cfg.nativeHdrGain))) cfg.nativeHdrGain = 1;
     cfg.nativeHdrGain = Number(cfg.nativeHdrGain);
+    cfg.autoSites = Array.isArray(cfg.autoSites)
+      ? [...new Set(cfg.autoSites.filter(site => typeof site === 'string' && site))] : [];
+    cfg.autoSmall = !!cfg.autoSmall; cfg.autoAds = !!cfg.autoAds;
     cfg.showFps = !!cfg.showFps; cfg.showWatermark = cfg.showWatermark !== false;
     cfg.showWarnings = cfg.showWarnings !== false; cfg.guard = !!cfg.guard;
   }
@@ -524,6 +527,10 @@
     nativeHdrGain.value = String(cfg.nativeHdrGain);
     syncCustomSelect(nativeHdrGain);
     panel.querySelector('#fcFG').checked = cfg.fg;
+    panel.querySelector('#fcAuto').checked = autoSiteEnabled();
+    panel.querySelector('#fcAutoSite').textContent = `Turn on for videos on ${siteKey()}`;
+    panel.querySelector('#fcAutoSmall').checked = cfg.autoSmall;
+    panel.querySelector('#fcAutoAds').checked = cfg.autoAds;
     panel.querySelector('#fcSR').checked = cfg.sr;
     panel.querySelector('#fc4K').checked = cfg.canvas4k;
     panel.querySelector('#fcFill').checked = cfg.fillDisplay;
@@ -534,7 +541,7 @@
     const hd = panel.querySelector('#fcHDR');
     hd.checked = cfg.hdr;
     if (!sys.hdrOk) { hd.disabled = true; hd.style.opacity = '.35'; }
-    syncHdrRows();
+    syncConditionalRows();
     syncPanelProfileSelection();
   }
 
@@ -553,13 +560,16 @@
     const row = control.closest('.fc-row');
     if (row) row.style.opacity = enabled ? '' : '.4';
   }
-  function syncHdrRows() {
+  function syncConditionalRows() {
     if (!panel) return;
     const hdrSource = sys.hdrOk && !!currentHdrSource();
     setRowEnabled(panel.querySelector('#fcNativeHdr'), hdrSource);
     setRowEnabled(panel.querySelector('#fcNativeHdrGain'),
       hdrSource && (cfg.nativeHdr === 'fix' || cfg.nativeHdr === 'real'));
     setRowEnabled(panel.querySelector('#fcMacHdr'), IS_MAC);
+    // auto-enable refinements only matter once this site is on the allowlist
+    setRowEnabled(panel.querySelector('#fcAutoSmall'), autoSiteEnabled());
+    setRowEnabled(panel.querySelector('#fcAutoAds'), autoSiteEnabled());
   }
 
   let rt = null, rtRes = 0, rtModel = '', rtGuard = null, rtGeneration = 0;
@@ -2163,6 +2173,7 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
         && hdrCurves[nativeHdrSource].state === 'idle') measureHdrCurve(nativeHdrSource);
     if (mode === 'original' || mode === 'pending') {
       resumeAfterCalibration = mode === 'pending' ? videoEl : null;
+      if (mode === 'original') autoSuppressHref = location.href; // no on/off loop
       if (running) setTimeout(() => { if (running) stop(); }, 0);
       advise(mode === 'pending'
         ? 'HDR video: calibrating, showing the original for a moment'
@@ -2785,6 +2796,57 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     };
     setTimeout(tick, 120);
   }
+  // ---------- auto-enable (per-site allowlist) ----------
+  // Sites the user opted in (panel toggle) get FG switched on automatically for a
+  // large, playing video. Hover previews / mini players and YouTube ads are left
+  // alone unless their own toggles allow them; picture-in-picture never qualifies
+  // (the PiP window shows the raw video, never our canvas). An auto-started FG steps
+  // aside while its player stops qualifying and comes back afterwards. A manual off, or an HDR source
+  // shown as the original, sticks for the current page until the URL changes.
+  function siteKey(host = location.hostname) {
+    const parts = host.replace(/^www\./, '').split('.');
+    if (parts.length <= 2) return parts.join('.');
+    const sld = parts[parts.length - 2], tld = parts[parts.length - 1];
+    const keep = tld.length === 2 && ['co', 'com', 'net', 'org', 'gov', 'edu', 'ac'].includes(sld) ? 3 : 2;
+    return parts.slice(-keep).join('.');
+  }
+  const autoSiteEnabled = () => cfg.autoSites.includes(siteKey());
+  let autoStarted = false, autoSuppressHref = null, autoUnfitSince = 0;
+  function autoFits(v) { // big enough (or small players allowed), on the page, ads per toggle
+    if (!v || !v.isConnected || document.pictureInPictureElement === v) return false;
+    if (!cfg.autoAds && v.closest('.html5-video-player')?.classList.contains('ad-showing')) return false;
+    const r = v.getBoundingClientRect();
+    if (cfg.autoSmall) return r.width >= 160 && r.height >= 90;
+    return r.width >= 480 && r.width >= innerWidth * 0.4 && r.height >= 200;
+  }
+  function autoEligible(v) { // ...and actually playing, not just loaded
+    return autoFits(v) && !v.paused && !v.ended && v.readyState >= 3 && v.currentTime >= 0.3;
+  }
+  setInterval(async () => {
+    if (autoSuppressHref && autoSuppressHref !== location.href) autoSuppressHref = null;
+    if (!autoSiteEnabled() || toggling) return;
+    if (running) {
+      if (!autoStarted) return; // manual FG is never touched
+      if (autoFits(videoEl)) { autoUnfitSince = 0; return; }
+      if (!autoUnfitSince) { autoUnfitSince = performance.now(); return; }
+      if (performance.now() - autoUnfitSince > 1000) { autoUnfitSince = 0; stop(); }
+      return;
+    }
+    if (autoSuppressHref === location.href) return;
+    const v = biggestVideo();
+    if (!autoEligible(v)) return;
+    toggling = true;
+    try {
+      if (!btn) injectUI();
+      await start(v);
+      autoStarted = true;
+      autoUnfitSince = 0;
+    } catch (e) {
+      log('auto-enable', e);
+      autoSuppressHref = location.href; // don't retry a failing page every second
+    } finally { toggling = false; }
+  }, 1000);
+
   let pageHref = location.href;
   setInterval(() => {
     // SPA navigation (YouTube next video, etc): the old stream is dead - showing
@@ -3419,7 +3481,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
         nativeHdrSource = sourceTransfer(videoEl);
         log('source transfer', nativeHdrSource || 'sdr', '- HDR video mode', cfg.nativeHdr);
         applyNativeHdr();
-        syncHdrRows();
+        syncConditionalRows();
       }
       const [vw, vh] = poolDims();
       // presentation delay must cover the batch compute time (own + the previous
@@ -4147,6 +4209,12 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       <div class="fc-divider"></div>
       <label class="fc-row"><span>Frame generation<small>Create smoother motion</small></span>
         <input class="fc-sw" type="checkbox" id="fcFG"></label>
+      <label class="fc-row"><span>Auto-enable<small id="fcAutoSite">Turn on for videos on this site</small></span>
+        <input class="fc-sw" type="checkbox" id="fcAuto"></label>
+      <label class="fc-row"><span>Auto: small players<small>Hover previews and mini windows</small></span>
+        <input class="fc-sw" type="checkbox" id="fcAutoSmall"></label>
+      <label class="fc-row"><span>Auto: during ads<small>Keep going through YouTube ads</small></span>
+        <input class="fc-sw" type="checkbox" id="fcAutoAds"></label>
       <div class="fc-row"><span>Output rate<small>Choose how playback is paced</small></span>
         <select class="fc-sel" id="fcFactor">
           <option value="auto">Auto · recommended</option>
@@ -4244,8 +4312,22 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     };
     panel.querySelector('#fcNativeHdr').onchange = event => {
       cfg.nativeHdr = event.currentTarget.value; saveCfg();
-      syncHdrRows();
+      syncConditionalRows();
       if (running) applyNativeHdr();
+    };
+    panel.querySelector('#fcAuto').onchange = event => {
+      const site = siteKey();
+      const sites = cfg.autoSites.filter(s => s !== site);
+      if (event.currentTarget.checked) sites.push(site);
+      cfg.autoSites = sites; saveCfg();
+      if (event.currentTarget.checked) autoSuppressHref = null; // opt-in applies right away
+      syncConditionalRows();
+    };
+    panel.querySelector('#fcAutoSmall').onchange = event => {
+      cfg.autoSmall = event.currentTarget.checked; saveCfg();
+    };
+    panel.querySelector('#fcAutoAds').onchange = event => {
+      cfg.autoAds = event.currentTarget.checked; saveCfg();
     };
     panel.querySelector('#fcNativeHdrGain').onchange = event => {
       cfg.nativeHdrGain = Number(event.currentTarget.value); saveCfg();
@@ -4300,7 +4382,13 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     if (!btn) injectUI(); // popup can toggle before the in-page UI ever booted
     toggling = true;
     try {
-      if (running) { stop(); return; }
+      if (running) {
+        stop();
+        autoStarted = false;
+        autoSuppressHref = location.href; // manual off wins until the next page
+        return;
+      }
+      autoStarted = false;
       const v = biggestVideo();
       if (!v) { hud.style.display = 'block'; hud.textContent = 'FC: no video found'; return; }
       try { await start(v); } catch (e) { hud.style.display = 'block'; hud.textContent = 'FG error: ' + (e.message || e); log(e); }
