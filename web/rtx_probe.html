@@ -1,0 +1,265 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTX VSR / HDR probe</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#ddd;font:13px system-ui}
+  body{display:flex;flex-direction:column}
+  #bar{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:6px 10px;background:#111;border-bottom:1px solid #333}
+  #bar select,#bar button,#bar input{font:inherit}
+  #hud{font:12px ui-monospace,monospace;white-space:pre;color:#8f8;flex-basis:100%}
+  #hud.warn{color:#fc6}
+  #stage{flex:1;position:relative;min-height:0;background:#000}
+  #stage>video,#stage>canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none}
+</style>
+<div id="bar">
+  <label>mode <select id="mode">
+    <option value="A">A  native &lt;video src&gt; (control: should be active)</option>
+    <option value="B">B  MediaStream &lt;- VideoFrame(video) (GPU, decoder format)</option>
+    <option value="C">C  MediaStream &lt;- VideoFrame(WebGPU canvas) (GPU RGBA = FG output)</option>
+    <option value="D">D  MediaStream &lt;- CPU I420 VideoFrame (canvas readback)</option>
+    <option value="E">E  canvas.captureStream() -&gt; &lt;video&gt;</option>
+    <option value="F">F  WebGPU canvas shown directly (= extension today)</option>
+    <option value="G">G  C on top of the playing original video (= extension with C)</option>
+  </select></label>
+  <label>render size <select id="scale">
+    <option value="1">100%</option>
+    <option value="0.5">50%</option>
+  </select></label>
+  <input type="file" id="file" accept="video/*">
+  <button id="fs">fullscreen (F)</button>
+  <div id="hud"></div>
+</div>
+<div id="stage">
+  <video id="out" muted playsinline loop></video>
+  <canvas id="cv"></canvas>
+</div>
+<script type="module">
+const $ = id => document.getElementById(id);
+const out = $('out'), cv = $('cv'), hud = $('hud'), stage = $('stage');
+const Q = new URLSearchParams(location.search);
+const src = document.createElement('video');
+src.muted = true; src.loop = true; src.playsInline = true;
+let url = Q.get('src') || '../demo/test_720p.mp4';
+let mode = Q.get('mode') || 'A';
+let scale = Number(Q.get('scale') || 1);
+$('mode').value = mode; $('scale').value = String(scale);
+
+const hasGenerator = 'MediaStreamTrackGenerator' in window;
+let device, ctx, pipe, sampler, tex, bindGroup, canvasFormat;
+let gen = null, writer = null, capTrack = null, loopId = 0;
+let inflight = 0, pushed = 0, lastErr = '';
+
+async function initGpu() {
+  const adapter = await navigator.gpu.requestAdapter();
+  device = await adapter.requestDevice();
+  canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+  ctx = cv.getContext('webgpu');
+  ctx.configure({ device, format: canvasFormat, alphaMode: 'opaque' });
+  sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+  const mod = device.createShaderModule({ code: `
+struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
+  let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+  var o: VOut;
+  o.pos = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  o.uv = vec2(p.x, 1.0 - p.y);
+  return o;
+}
+@group(0) @binding(0) var t: texture_2d<f32>;
+@group(0) @binding(1) var s: sampler;
+@fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
+  return vec4(textureSampleLevel(t, s, v.uv, 0.0).rgb, 1.0);
+}` });
+  pipe = device.createRenderPipeline({ layout: 'auto',
+    vertex: { module: mod, entryPoint: 'vs' },
+    fragment: { module: mod, entryPoint: 'fs', targets: [{ format: canvasFormat }] } });
+}
+
+function render() {
+  const vw = src.videoWidth, vh = src.videoHeight;
+  const cw = Math.max(2, Math.round(vw * scale / 2) * 2), ch = Math.max(2, Math.round(vh * scale / 2) * 2);
+  if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+  if (!tex || tex.width !== vw || tex.height !== vh) {
+    tex?.destroy();
+    tex = device.createTexture({ size: [vw, vh], format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+    bindGroup = device.createBindGroup({ layout: pipe.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: tex.createView() }, { binding: 1, resource: sampler }] });
+  }
+  device.queue.copyExternalImageToTexture({ source: src }, { texture: tex }, [vw, vh]);
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(),
+    loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+  pass.setPipeline(pipe); pass.setBindGroup(0, bindGroup); pass.draw(3); pass.end();
+  device.queue.submit([enc.finish()]);
+}
+
+const I420_COLOR = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
+async function toI420(frame) {
+  const w = frame.codedWidth, h = frame.codedHeight;
+  const rgb = new Uint8Array(frame.allocationSize());
+  const [layout] = await frame.copyTo(rgb);
+  const bgr = frame.format.startsWith('BGR');
+  const ri = bgr ? 2 : 0, bi = bgr ? 0 : 2;
+  const cw = w >> 1, ch = h >> 1;
+  const yuv = new Uint8Array(w * h + 2 * cw * ch);
+  const U = w * h, V = U + cw * ch;
+  for (let y = 0; y < h; y++) {
+    const row = layout.offset + y * layout.stride;
+    for (let x = 0; x < w; x++) {
+      const p = row + x * 4;
+      yuv[y * w + x] = 16 + 0.18259 * rgb[p + ri] + 0.61423 * rgb[p + 1] + 0.06201 * rgb[p + bi] + 0.5;
+    }
+  }
+  for (let y = 0; y < ch; y++) {
+    const r0 = layout.offset + 2 * y * layout.stride, r1 = r0 + layout.stride;
+    for (let x = 0; x < cw; x++) {
+      const a = r0 + 8 * x, b = r1 + 8 * x;
+      const R = (rgb[a + ri] + rgb[a + 4 + ri] + rgb[b + ri] + rgb[b + 4 + ri]) / 4;
+      const G = (rgb[a + 1] + rgb[a + 5] + rgb[b + 1] + rgb[b + 5]) / 4;
+      const B = (rgb[a + bi] + rgb[a + 4 + bi] + rgb[b + bi] + rgb[b + 4 + bi]) / 4;
+      yuv[U + y * cw + x] = 128 - 0.100644 * R - 0.338572 * G + 0.439216 * B + 0.5;
+      yuv[V + y * cw + x] = 128 + 0.439216 * R - 0.398942 * G - 0.040274 * B + 0.5;
+    }
+  }
+  return new VideoFrame(yuv, { format: 'I420', codedWidth: w, codedHeight: h,
+    timestamp: frame.timestamp, colorSpace: I420_COLOR });
+}
+
+function push(frame, w, id) {
+  if (id !== loopId) { frame.close(); return; }
+  inflight++;
+  w.write(frame).then(() => { if (id === loopId) pushed++; },
+    e => { if (id === loopId) lastErr = 'write: ' + e.message; })
+    .finally(() => { if (id === loopId) inflight--; });
+}
+
+function step(id) {
+  if (src.readyState < 2 || !src.videoWidth) return;
+  const ts = Math.round(performance.now() * 1000);
+  const w = writer;
+  try {
+    if (mode === 'B') {
+      if (inflight > 2) return;
+      push(new VideoFrame(src, { timestamp: ts }), w, id);
+    } else if (mode === 'C' || mode === 'G') {
+      if (inflight > 2) return;
+      render();
+      push(new VideoFrame(cv, { timestamp: ts }), w, id);
+    } else if (mode === 'D') {
+      if (inflight > 1) return;
+      render();
+      const f = new VideoFrame(cv, { timestamp: ts });
+      inflight++;
+      toI420(f).then(y => push(y, w, id), e => { if (id === loopId) lastErr = 'i420: ' + e.message; })
+        .finally(() => { f.close(); if (id === loopId) inflight--; });
+    } else if (mode === 'E') {
+      render();
+      capTrack.requestFrame();
+      pushed++;
+    } else if (mode === 'F') {
+      render();
+      pushed++;
+    }
+  } catch (e) { lastErr = e.message; }
+}
+
+function loop(id) {
+  if (id !== loopId) return;
+  step(id);
+  requestAnimationFrame(() => loop(id));
+}
+
+function teardown() {
+  loopId++;
+  try { writer?.releaseLock(); } catch {}
+  try { gen?.stop(); } catch {}
+  try { capTrack?.stop(); } catch {}
+  gen = writer = capTrack = null;
+  out.pause(); out.srcObject = null; out.removeAttribute('src'); out.load();
+  out.style.display = cv.style.display = 'none';
+  if (src.parentNode) src.remove();
+  pushed = 0; inflight = 0; lastErr = '';
+}
+
+async function start() {
+  teardown();
+  const id = loopId;
+  if (mode === 'A') {
+    src.pause();
+    out.src = url;
+    out.style.display = 'block';
+    await out.play().catch(e => { if (id === loopId) lastErr = e.message; });
+    return;
+  }
+  if ('BCDG'.includes(mode) && !hasGenerator) {
+    lastErr = 'MediaStreamTrackGenerator missing (Chrome only)';
+    return;
+  }
+  if (src.src !== new URL(url, location.href).href) src.src = url;
+  await src.play().catch(e => { if (id === loopId) lastErr = e.message; });
+  if (mode === 'G') { stage.insertBefore(src, out); src.style.display = 'block'; }
+  if (mode === 'F') {
+    cv.style.display = 'block';
+  } else {
+    let stream;
+    if (mode === 'E') {
+      stream = cv.captureStream(0);
+      capTrack = stream.getVideoTracks()[0];
+    } else {
+      gen = new MediaStreamTrackGenerator({ kind: 'video' });
+      writer = gen.writable.getWriter();
+      stream = new MediaStream([gen]);
+    }
+    out.srcObject = stream;
+    out.style.display = 'block';
+    out.play().catch(e => { if (id === loopId) lastErr = e.message; });
+  }
+  loop(id);
+}
+
+let lastPushed = 0, lastT = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const fps = (pushed - lastPushed) * 1000 / (now - lastT);
+  lastPushed = pushed; lastT = now;
+  const el = mode === 'F' ? cv : out;
+  const fw = mode === 'A' || mode === 'B' ? (mode === 'A' ? out.videoWidth : src.videoWidth) : cv.width;
+  const fh = mode === 'A' || mode === 'B' ? (mode === 'A' ? out.videoHeight : src.videoHeight) : cv.height;
+  const r = el.getBoundingClientRect();
+  const dpr = devicePixelRatio;
+  const up = fw && fh ? Math.min(r.width * dpr / fw, r.height * dpr / fh) : 0;
+  const q = out.getVideoPlaybackQuality?.();
+  const lines = [
+    `mode ${mode}  frame ${fw}x${fh}  on screen ${Math.round(r.width * dpr)}x${Math.round(r.height * dpr)}  upscale x${up.toFixed(2)}`
+      + (mode === 'A' ? '' : `  pushed ${fps.toFixed(0)} fps`)
+      + (q && mode !== 'F' ? `  shown ${q.totalVideoFrames} dropped ${q.droppedVideoFrames}` : ''),
+  ];
+  if (up && up <= 1.0) lines.push('not upscaled: VSR will not engage - enlarge the window, go fullscreen, or use render size 50%');
+  if (lastErr) lines.push('error: ' + lastErr);
+  hud.textContent = lines.join('\n');
+  hud.className = lastErr || (up && up <= 1.0) ? 'warn' : '';
+}, 500);
+
+$('mode').onchange = e => { mode = e.target.value; start(); };
+$('scale').onchange = e => { scale = Number(e.target.value); };
+$('file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  url = URL.createObjectURL(f);
+  src.removeAttribute('src');
+  start();
+};
+const toggleFs = () => document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen();
+$('fs').onclick = toggleFs;
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  const k = e.key.toUpperCase();
+  if (k === 'F') toggleFs();
+  else if ('ABCDEG'.includes(k) && k.length === 1) { mode = k; $('mode').value = mode; start(); }
+});
+
+await initGpu();
+start();
+</script>
