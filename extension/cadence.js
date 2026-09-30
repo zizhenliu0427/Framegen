@@ -1,5 +1,6 @@
 (function installFramegenCadence(root) {
   'use strict';
+  const t = globalThis.FramegenI18n ? globalThis.FramegenI18n.t : (k => k);
 
   const DISPLAY_RATES = Object.freeze([360, 240, 180, 165, 144, 120, 100, 90, 75, 72, 60, 50]);
   const COMMON_VIDEO_RATES = Object.freeze([
@@ -520,11 +521,11 @@
 
     if (safeMode === 'target' && requestedHz === null) {
       return { ...base, state: 'invalid-target',
-        warning: 'Target FPS must be a positive number' };
+        warning: t('rate_targetMustBePositive') };
     }
     if (!sourceReady || normalizedSourceHz === null || !displayReady || !display.measured) {
       return { ...base, state: 'measuring',
-        warning: 'Measuring source FPS and display refresh rate' };
+        warning: t('rate_measuring') };
     }
 
     const runtimeCapacityHz = normalizedSourceHz * (MAX_MIDS_PER_PAIR + 1);
@@ -556,13 +557,13 @@
       return {
         ...base, state: 'no-2x-display-range', computeCapacityHz,
         runtimeCapacityHz,
-        warning: `Needs at least ${formatRate(minimumHz)} Hz; display is ~${formatRate(display.capacityHz)} Hz`,
+        warning: t('rate_displayTooLow', { hz: formatRate(minimumHz), cap: formatRate(display.capacityHz) }),
       };
     }
     if (!strictCeiling && computeCapacityHz + toleranceHz < minimumHz) {
       return {
         ...base, state: 'no-2x-gpu-range', computeCapacityHz, runtimeCapacityHz,
-        warning: `GPU cannot sustain the ${formatRate(minimumHz)} FPS minimum at this quality`,
+        warning: t('rate_gpuCantSustain', { hz: formatRate(minimumHz) }),
       };
     }
 
@@ -784,12 +785,12 @@
   }
 
   function outputRateLabel(mode, targetFps = DEFAULT_TARGET_FPS) {
-    if (Object.hasOwn(LEGACY_TARGETS, mode)) return `${LEGACY_TARGETS[mode]} FPS`;
+    if (Object.hasOwn(LEGACY_TARGETS, mode)) return t('rate_fps', { fps: LEGACY_TARGETS[mode] });
     const safeMode = sanitizeOutputRate(mode);
-    if (safeMode === 'auto') return 'Auto';
-    if (safeMode === 'hz') return 'Display Hz';
-    if (safeMode === 'target') return `${formatRate(sanitizeTargetFps(targetFps, DEFAULT_TARGET_FPS))} FPS`;
-    return `${safeMode}x source`;
+    if (safeMode === 'auto') return t('rate_auto');
+    if (safeMode === 'hz') return t('rate_displayHz');
+    if (safeMode === 'target') return t('rate_fps', { fps: formatRate(sanitizeTargetFps(targetFps, DEFAULT_TARGET_FPS)) });
+    return t('rate_sourceX', { n: safeMode });
   }
 
   function enqueuePresentation(queue, entry) {

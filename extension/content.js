@@ -59,6 +59,7 @@
     cfg.showFps = !!cfg.showFps; cfg.showWatermark = cfg.showWatermark !== false;
     cfg.showWarnings = cfg.showWarnings !== false; cfg.guard = !!cfg.guard;
   }
+  const t = FramegenI18n.t;
   let settleSettingsReady = () => {};
   let settingsSettled = !!PRODUCT_BENCH;
   const settingsReady = PRODUCT_BENCH ? Promise.resolve() : new Promise((resolve) => {
@@ -406,25 +407,25 @@
     const hint = panel.querySelector('#fcRateSliderHint');
     const scale = panel.querySelector('#fcRateSliderScale');
     if (cfg.factor === 'auto') {
-      title.textContent = 'FPS limit';
-      hint.textContent = 'Common rates · Auto may run lower';
+      title.textContent = t('panel_fpsLimit');
+      hint.textContent = t('panel_fpsLimitHint');
       input.min = '0';
       input.max = String(FPS_LIMIT_STEPS.length - 1);
       input.step = '1';
       input.value = String(fpsLimitStepIndex(cfg.fpsLimit));
-      input.setAttribute('aria-label', 'FPS limit');
+      input.setAttribute('aria-label', t('panel_fpsLimit'));
       renderRateScale(scale, [15, 60, 120, 240, null].map(value => ({
         label: value === null ? '∞' : String(value),
         position: fpsLimitStepIndex(value) / (FPS_LIMIT_STEPS.length - 1) * 100,
       })));
     } else {
-      title.textContent = 'Custom FPS';
-      hint.textContent = 'Exact target · minimum 2× source';
+      title.textContent = t('panel_customFps');
+      hint.textContent = t('panel_customFpsHint');
       input.min = '2';
       input.max = '1000';
       input.step = '0.01';
       input.value = String(cfg.targetFps);
-      input.setAttribute('aria-label', 'Custom FPS');
+      input.setAttribute('aria-label', t('panel_customFps'));
       renderRateScale(scale, [
         { label: '2', position: 0 },
         { label: '500', position: 49.9 },
@@ -450,12 +451,12 @@
     if (!select || !panelProfileStore) return;
     const current = document.createElement('option');
     current.value = '';
-    current.textContent = 'Current settings';
+    current.textContent = t('panel_currentSettings');
     const children = [current];
     const profiles = Profiles.profileList(panelProfileStore);
     if (profiles.length) {
       const group = document.createElement('optgroup');
-      group.label = 'My profiles';
+      group.label = t('panel_myProfiles');
       for (const profile of profiles) {
         const option = document.createElement('option');
         option.value = profile.id;
@@ -489,7 +490,7 @@
       panelProfileStore = null;
       if (select) {
         const unavailable = document.createElement('option');
-        unavailable.textContent = 'Profiles unavailable';
+        unavailable.textContent = t('panel_profilesUnavailable');
         select.replaceChildren(unavailable);
         select.disabled = true;
         rebuildCustomSelect(select);
@@ -530,7 +531,7 @@
     syncCustomSelect(nativeHdrGain);
     panel.querySelector('#fcFG').checked = cfg.fg;
     panel.querySelector('#fcAuto').checked = autoSiteEnabled();
-    panel.querySelector('#fcAutoSite').textContent = `Turn on for videos on ${siteKey()}`;
+    panel.querySelector('#fcAutoSite').textContent = t('panel_autoEnableHint', { site: siteKey() });
     panel.querySelector('#fcAutoSmall').checked = cfg.autoSmall;
     panel.querySelector('#fcAutoAds').checked = cfg.autoAds;
     panel.querySelector('#fcSR').checked = cfg.sr;
@@ -1002,7 +1003,7 @@
       requestedHz: plan.requestedHz,
       state: 'probing-gpu',
       clampReason: 'gpu-probe',
-      warning: 'Checking GPU capacity at 2x',
+      warning: t('hud_checkingGpu'),
       admissionCostMs: 0.2 + learnedPresentationCostMs,
       pairCostMs: 0.1,
       modelCostMs: 0.1,
@@ -1018,7 +1019,7 @@
 
   function outputRateLabel() {
     if (cfg.factor === 'auto' && cfg.fpsLimit !== null) {
-      return `Auto · max ${Number(cfg.fpsLimit.toFixed(2))} FPS`;
+      return t('rate_autoMax', { fps: Number(cfg.fpsLimit.toFixed(2)) });
     }
     return Cadence.outputRateLabel(cfg.factor, cfg.targetFps);
   }
@@ -1628,7 +1629,7 @@
     }
     if (hud) {
       hud.style.display = 'block';
-      hud.textContent = 'FG: GPU reset detected - recovering...';
+      hud.textContent = t('hud_gpuReset');
     }
 
     log('device lost', info?.reason || 'unknown', info?.message || '');
@@ -1686,7 +1687,7 @@
       log('device recovery failed', error);
       if (hud) {
         hud.style.display = 'block';
-        hud.textContent = 'FG: GPU recovery failed - reload this page';
+        hud.textContent = t('hud_gpuFailed');
       }
     } finally {
       switching = false;
@@ -3238,7 +3239,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       + 'border:1px solid rgba(255,120,100,.35); border-radius:12px; padding:8px 14px;'
       + 'font:12px system-ui; box-shadow:0 4px 20px rgba(0,0,0,.4);'
       + 'opacity:0; transform:translateY(-6px); transition:opacity .25s, transform .25s;';
-    warnEl.textContent = '⚠ Load too high - lower the factor or switch to auto';
+    warnEl.textContent = t('hud_loadHigh');
     uiLayer().appendChild(warnEl);
   }
   function updateWarn(now, vr) {
@@ -3731,7 +3732,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
         log('frame error', e);
         stop();
         hud.style.display = 'block';
-        hud.textContent = 'FG error: ' + (e.message || e);
+        hud.textContent = t('hud_error', { error: e.message || e });
       }
     } finally {
       processingFrame = false;
@@ -4154,7 +4155,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       } catch (e) {
         if (e.name === 'SecurityError' || String(e).includes('cross-origin')) {
           hud.style.display = 'block';
-          hud.textContent = 'FC: video lacks CORS - reloading…';
+          hud.textContent = t('hud_corsReload');
           await makeReadable(videoEl); // throws a friendly error if the CDN refuses
           if (startEpoch !== playbackLoopEpoch || videoEl !== v) return;
           // seed is cosmetic (seamless fade-in): if the decoder still has no frame,
@@ -4325,7 +4326,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     panel = document.createElement('section');
     panel.className = 'fc-panel';
     panel.id = 'fcSettingsPanel';
-    panel.setAttribute('aria-label', 'Framegen settings');
+    panel.setAttribute('aria-label', t('panel_settingsLabel'));
     panel.setAttribute('aria-hidden', 'true');
     panel.innerHTML = `
       <div class="fc-panel-head">
@@ -4335,86 +4336,86 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
         </div>
         <a class="fc-icon-link" href="https://github.com/MONZikWasTaken/Framegen"
           target="_blank" rel="noopener noreferrer"
-          aria-label="Open Framegen on GitHub">
+          aria-label="${t('opt_githubLabel')}">
           <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.3-5.27-1.29-5.27-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.16 1.18a10.96 10.96 0 0 1 5.75 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.41-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/>
           </svg>
         </a>
       </div>
-      <div class="fc-row fc-profile-row"><span>Profile<small>Apply a saved setup</small></span>
+      <div class="fc-row fc-profile-row"><span>${t('panel_profile')}<small>${t('panel_profileHint')}</small></span>
         <select class="fc-sel fc-profile" id="fcProfile" disabled>
-          <option>Loading profiles…</option>
+          <option>${t('panel_loadingProfiles')}</option>
         </select></div>
       <div class="fc-divider"></div>
-      <label class="fc-row"><span>Frame generation<small>Create smoother motion</small></span>
+      <label class="fc-row"><span>${t('panel_frameGen')}<small>${t('panel_frameGenHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcFG"></label>
-      <label class="fc-row"><span>Auto-enable<small id="fcAutoSite">Turn on for videos on this site</small></span>
+      <label class="fc-row"><span>${t('panel_autoEnable')}<small id="fcAutoSite">${t('panel_autoEnableHint', { site: siteKey() })}</small></span>
         <input class="fc-sw" type="checkbox" id="fcAuto"></label>
-      <label class="fc-row"><span>Auto: small players<small>Hover previews and mini windows</small></span>
+      <label class="fc-row"><span>${t('panel_autoSmall')}<small>${t('panel_autoSmallHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcAutoSmall"></label>
-      <label class="fc-row"><span>Auto: during ads<small>Keep going through YouTube ads</small></span>
+      <label class="fc-row"><span>${t('panel_autoAds')}<small>${t('panel_autoAdsHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcAutoAds"></label>
-      <div class="fc-row"><span>Output rate<small>Choose how playback is paced</small></span>
+      <div class="fc-row"><span>${t('panel_outputRate')}<small>${t('panel_outputRateHint')}</small></span>
         <select class="fc-sel" id="fcFactor">
-          <option value="auto">Auto · recommended</option>
-          <option value="hz">Match display</option>
-          <option value="target">Custom FPS</option>
-          <option value="2">2× source</option><option value="3">3× source</option>
-          <option value="4">4× source</option><option value="5">5× source</option>
-          <option value="6">6× source</option>
+          <option value="auto">${t('panel_autoRecommended')}</option>
+          <option value="hz">${t('panel_matchDisplay')}</option>
+          <option value="target">${t('panel_customFps')}</option>
+          <option value="2">${t('panel_sourceX', {n:2})}</option><option value="3">${t('panel_sourceX', {n:3})}</option>
+          <option value="4">${t('panel_sourceX', {n:4})}</option><option value="5">${t('panel_sourceX', {n:5})}</option>
+          <option value="6">${t('panel_sourceX', {n:6})}</option>
         </select></div>
       <label class="fc-target-control">
-        <span class="fc-target-head"><span><span id="fcRateSliderTitle">FPS limit</span>
-          <small id="fcRateSliderHint">Common rates · Auto may run lower</small></span>
-          <output id="fcTargetFpsValue" for="fcTargetFps">Unlimited</output></span>
+        <span class="fc-target-head"><span><span id="fcRateSliderTitle">${t('panel_fpsLimit')}</span>
+          <small id="fcRateSliderHint">${t('panel_fpsLimitHint')}</small></span>
+          <output id="fcTargetFpsValue" for="fcTargetFps">${t('panel_unlimited')}</output></span>
         <input class="fc-target-slider" id="fcTargetFps" type="range" min="0" max="17"
-          step="1" value="17" aria-label="FPS limit">
+          step="1" value="17" aria-label="${t('panel_fpsLimit')}">
         <span class="fc-target-scale" id="fcRateSliderScale" aria-hidden="true">
           <span>15</span><span>60</span><span>120</span><span>240</span><span>∞</span>
         </span>
       </label>
-      <label class="fc-row"><span>Full refresh<small>Match display at 100% · may skip a frame on hitches</small></span>
+      <label class="fc-row"><span>${t('panel_fullRefresh')}<small>${t('panel_fullRefreshHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcFill"></label>
-      <label class="fc-row"><span>Upscale<small>2× neural resolution boost</small></span>
+      <label class="fc-row"><span>${t('panel_upscale')}<small>${t('panel_upscaleHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcSR"></label>
-      <label class="fc-row"><span>HDR<small>Brighter highlights on HDR displays</small></span>
+      <label class="fc-row"><span>${t('panel_hdr')}<small>${t('panel_hdrHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcHDR"></label>
-      <label class="fc-row"><span>RTX Video<small>Replaces Upscale and HDR · strength: NVIDIA App → System → Video</small></span>
+      <label class="fc-row"><span>${t('panel_rtxVideo')}<small>${t('panel_rtxVideoHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcRtx"></label>
-      <div class="fc-row"><span>HDR video<small>Native HDR sources on an HDR display</small></span>
+      <div class="fc-row"><span>${t('panel_hdrVideo')}<small>${t('panel_hdrVideoHint')}</small></span>
         <select class="fc-sel" id="fcNativeHdr">
-          <option value="original">Show original</option>
-          <option value="fix">Gentle HDR (experimental)</option>
-          <option value="real">Real HDR (experimental)</option>
-          <option value="off">Off (as before)</option>
+          <option value="original">${t('panel_showOriginal')}</option>
+          <option value="fix">${t('panel_gentleHdr')}</option>
+          <option value="real">${t('panel_realHdr')}</option>
+          <option value="off">${t('panel_offBefore')}</option>
         </select></div>
-      <div class="fc-row"><span>HDR brightness<small>For the experimental HDR video modes</small></span>
+      <div class="fc-row"><span>${t('panel_hdrBrightness')}<small>${t('panel_hdrBrightnessHint')}</small></span>
         <select class="fc-sel" id="fcNativeHdrGain">
-          <option value="0.7">Dim</option>
-          <option value="0.85">Slightly dim</option>
-          <option value="1">Normal</option>
-          <option value="1.2">Bright</option>
-          <option value="1.4">Brighter</option>
+          <option value="0.7">${t('panel_dim')}</option>
+          <option value="0.85">${t('panel_slightlyDim')}</option>
+          <option value="1">${t('panel_normal')}</option>
+          <option value="1.2">${t('panel_bright')}</option>
+          <option value="1.4">${t('panel_brighter')}</option>
         </select></div>
-      <label class="fc-row"><span>HDR full-screen fix<small>Mac: keeps HDR correct in full screen</small></span>
+      <label class="fc-row"><span>${t('panel_hdrFsFix')}<small>${t('panel_hdrFsFixHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcMacHdr"></label>
-      <label class="fc-row"><span>4K canvas<small>Keep up to 4K sharpness · more GPU</small></span>
+      <label class="fc-row"><span>${t('panel_4kCanvas')}<small>${t('panel_4kCanvasHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fc4K"></label>
-      <div class="fc-row"><span>Quality<small>Balance detail and GPU load</small></span>
+      <div class="fc-row"><span>${t('panel_quality')}<small>${t('panel_qualityHint')}</small></span>
         <select class="fc-sel" id="fcRes">
-          <option value="288">Low power</option><option value="360">Efficient</option>
-          <option value="480">Balanced</option>
-          <option value="720">High</option>
-          <option value="1080">Ultra</option>
+          <option value="288">${t('panel_lowPower')}</option><option value="360">${t('panel_efficient')}</option>
+          <option value="480">${t('panel_balanced')}</option>
+          <option value="720">${t('panel_high')}</option>
+          <option value="1080">${t('panel_ultra')}</option>
         </select></div>
-      <label class="fc-row"><span>FPS counter<small>Show frame rate and render time</small></span>
+      <label class="fc-row"><span>${t('panel_fpsCounter')}<small>${t('panel_fpsCounterHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcShowFps"></label>
-      <label class="fc-row"><span>Watermark<small>Show the Framegen label on video</small></span>
+      <label class="fc-row"><span>${t('panel_watermark')}<small>${t('panel_watermarkHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcWatermark"></label>
-      <label class="fc-row"><span>Warnings<small>Show non-critical notices over video</small></span>
+      <label class="fc-row"><span>${t('panel_warnings')}<small>${t('panel_warningsHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcWarnings"></label>
       <button class="fc-open-settings" id="fcOpenSettings" type="button">
-        <span>Advanced settings</span>
+        <span>${t('panel_advancedSettings')}</span>
         <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
           <path fill="currentColor" d="m6 3 5 5-5 5-1.2-1.2L8.6 8 4.8 4.2 6 3Z"/>
         </svg>
@@ -4538,8 +4539,8 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       }
       autoStarted = false;
       const v = biggestVideo();
-      if (!v) { hud.style.display = 'block'; hud.textContent = 'FC: no video found'; return; }
-      try { await start(v); } catch (e) { hud.style.display = 'block'; hud.textContent = 'FG error: ' + (e.message || e); log(e); }
+      if (!v) { hud.style.display = 'block'; hud.textContent = t('hud_noVideo'); return; }
+      try { await start(v); } catch (e) { hud.style.display = 'block'; hud.textContent = t('hud_error', { error: e.message || e }); log(e); }
     } finally { toggling = false; }
   }
 
@@ -4727,7 +4728,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     btn.className = 'fc-side';
     btn.type = 'button';
     btn.dataset.active = 'false';
-    btn.setAttribute('aria-label', 'Toggle Framegen');
+    btn.setAttribute('aria-label', t('panel_toggleLabel'));
     btn.setAttribute('aria-pressed', 'false');
     btn.innerHTML = `
       <svg class="fc-mark" viewBox="0 0 28 20" aria-hidden="true">
@@ -4738,7 +4739,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     gear.className = 'fc-side';
     gear.type = 'button';
     gear.dataset.open = 'false';
-    gear.setAttribute('aria-label', 'Open Framegen settings');
+    gear.setAttribute('aria-label', t('panel_openSettings'));
     gear.setAttribute('aria-controls', 'fcSettingsPanel');
     gear.setAttribute('aria-expanded', 'false');
     gear.innerHTML = `

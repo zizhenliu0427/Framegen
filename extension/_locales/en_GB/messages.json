@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Framegen (fork)",
+    "description": "Extension name"
+  },
+  "extDescription": {
+    "message": "Real-time 2x+ frame interpolation with custom target FPS for any <video>. Runs locally on your GPU with WebGPU.",
+    "description": "Extension description"
+  }
+}

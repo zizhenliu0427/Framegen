@@ -5,6 +5,7 @@
   if (!Profiles) throw new Error('Framegen profile store is unavailable');
 
   const $ = (id) => document.getElementById(id);
+  const t = FramegenI18n.t;
   const BOOLEAN_FIELDS = Object.freeze([
     'fg', 'sr', 'hdr', 'anime', 'guard', 'hoverReveal',
     'showFps', 'showWatermark', 'showWarnings', 'compare', 'debug',
@@ -27,9 +28,9 @@
   let profileStoreReadOnly = false;
   let profileStoreError = '';
 
-  function enterProfileStoreReadOnly(error, status = 'Profile storage is read-only') {
+  function enterProfileStoreReadOnly(error, status = t('opt_readOnly')) {
     profileStoreReadOnly = true;
-    profileStoreError = error?.message || 'Profiles are read-only';
+    profileStoreError = error?.message || t('opt_profilesReadOnly');
     $('runtimeStatus').textContent = status;
     $('editState').textContent = profileStoreError;
     for (const id of STORE_MUTATION_CONTROLS) $(id).disabled = true;
@@ -90,7 +91,7 @@
   function updateFpsLimitPresentation() {
     const input = $('fpsLimit');
     const value = fpsLimitFromSlider();
-    const label = value === null ? 'Unlimited' : `${value} FPS`;
+    const label = value === null ? t('opt_unlimited') : `${value} FPS`;
     const ratio = Number(input.value) / Math.max(1, FPS_LIMIT_PRESETS.length - 1);
     input.style.setProperty('--fill', `${ratio * 100}%`);
     input.setAttribute('aria-valuetext', label);
@@ -105,7 +106,7 @@
       const mark = document.createElement('span');
       const position = Profiles.fpsLimitPresetIndex(value) / maxIndex * 100;
       const offset = Number((7.5 * (1 - 2 * position / 100)).toFixed(3));
-      mark.textContent = value === null ? '∞' : String(value);
+      mark.textContent = value === null ? '\u221e' : String(value);
       mark.style.setProperty('--position', `${position}%`);
       mark.style.setProperty('--offset', `${offset}px`);
       return mark;
@@ -126,7 +127,7 @@
     if (draftSettings.factor !== 'target') return true;
     if ($('targetFps').checkValidity()) return true;
     $('targetFps').reportValidity();
-    lastMessage = 'Enter a Custom FPS from 2 to 1000';
+    lastMessage = t('opt_fpsValidation');
     renderStatus();
     return false;
   }
@@ -161,12 +162,12 @@
   function renderProfileSelect() {
     const current = document.createElement('option');
     current.value = '';
-    current.textContent = 'Current settings';
+    current.textContent = t('opt_currentSettings');
     const children = [current];
     const profiles = Profiles.profileList(store);
     if (profiles.length > 0) {
       const group = document.createElement('optgroup');
-      group.label = 'My profiles';
+      group.label = t('opt_myProfiles');
       for (const profile of profiles) {
         const option = document.createElement('option');
         option.value = profile.id;
@@ -181,8 +182,8 @@
 
   function renderStatus() {
     if (profileStoreReadOnly) {
-      $('runtimeStatus').textContent = 'Profile storage is read-only';
-      $('editState').textContent = profileStoreError || 'Profiles are read-only';
+      $('runtimeStatus').textContent = t('opt_readOnly');
+      $('editState').textContent = profileStoreError || t('opt_profilesReadOnly');
       for (const id of STORE_MUTATION_CONTROLS) $(id).disabled = true;
       return;
     }
@@ -194,9 +195,9 @@
     if (lastAppliedMatches) {
       $('runtimeStatus').innerHTML = `Current: <strong>${escapeHtml(lastApplied.name)}</strong>`;
     } else if (lastApplied) {
-      $('runtimeStatus').innerHTML = `<strong>Current settings</strong> · changed after ${escapeHtml(lastApplied.name)}`;
+      $('runtimeStatus').innerHTML = `<strong>${t('opt_currentSettings')}</strong> \u00b7 changed after ${escapeHtml(lastApplied.name)}`;
     } else {
-      $('runtimeStatus').innerHTML = 'Current: <strong>Custom settings</strong>';
+      $('runtimeStatus').innerHTML = 'Current: <strong>' + t('opt_currentSettings') + '</strong>';
     }
 
     const hasDraftEdits = !Profiles.settingsEqual(draftSettings, draftOrigin);
@@ -209,22 +210,22 @@
       : pendingRuntimeChange;
 
     if (externalChangeNotice) {
-      $('editState').textContent = 'Changed in another tab';
+      $('editState').textContent = t('opt_changedInTab');
     } else if (lastMessage) {
       $('editState').textContent = lastMessage;
     } else if (hasDraftEdits || selectedModified) {
-      $('editState').textContent = 'Unsaved preview';
+      $('editState').textContent = t('opt_unsavedPreview');
     } else if (selected && pendingApply) {
       $('editState').textContent = `Previewing ${selected.name}`;
     } else {
-      $('editState').textContent = 'Up to date';
+      $('editState').textContent = t('opt_upToDate');
     }
 
     $('resetDraft').disabled = !externalChangeNotice && !hasDraftEdits;
     $('applySettings').disabled = !pendingApply;
     $('saveProfile').hidden = !selected;
     $('saveProfile').disabled = !selected || !selectedModified;
-    $('saveProfile').textContent = 'Save profile';
+    $('saveProfile').textContent = t('opt_saveProfile');
     for (const id of ['renameProfile', 'deleteProfile', 'duplicateProfile']) {
       $(id).disabled = !selected;
       $(id).hidden = !selected;
@@ -252,7 +253,7 @@
   }
 
   async function persistStore(nextStore = store) {
-    if (profileStoreReadOnly) throw new Profiles.ProfileStoreError('Profiles are read-only');
+    if (profileStoreReadOnly) throw new Profiles.ProfileStoreError(t('opt_profilesReadOnly'));
     await chrome.storage.local.set({ [Profiles.STORE_KEY]: nextStore });
     store = nextStore;
     storageSnapshot[Profiles.STORE_KEY] = nextStore;
@@ -279,10 +280,10 @@
         : settingsCopy(draftSettings);
       draftSource = selected ? 'profile' : 'current';
       externalChangeNotice = false;
-      lastMessage = 'Settings applied';
+      lastMessage = t('opt_settingsApplied');
       renderAll();
     } catch {
-      lastMessage = 'Could not apply settings';
+      lastMessage = t('opt_cannotApply');
       renderStatus();
     }
   }
@@ -293,9 +294,9 @@
     const selected = currentProfile();
     dialogMode = mode;
     const titles = {
-      new: ['New profile', 'Create', 'Custom profile'],
-      duplicate: ['Duplicate profile', 'Create copy', selected ? `${selected.name} copy` : 'Profile copy'],
-      rename: ['Rename profile', 'Rename', selected?.name || 'Custom profile'],
+      new: [t('opt_newProfile'), t('opt_create'), t('opt_customProfile')],
+      duplicate: [t('opt_duplicateProfile'), t('opt_createCopy'), selected ? t('opt_nameCopy', { name: selected.name }) : t('opt_profileCopy')],
+      rename: [t('opt_renameProfile'), t('opt_rename'), selected?.name || t('opt_customProfile')],
     };
     const [title, action, value] = titles[mode];
     $('profileDialogTitle').textContent = title;
@@ -311,7 +312,7 @@
     if (profileStoreReadOnly) return;
     const name = Profiles.normalizeName($('profileName').value, '');
     if (!name) {
-      $('profileName').setCustomValidity('Enter a profile name.');
+      $('profileName').setCustomValidity(t('opt_enterName'));
       $('profileName').reportValidity();
       return;
     }
@@ -339,12 +340,12 @@
         draftSource = 'profile';
       }
       $('profileDialog').close();
-      lastMessage = dialogMode === 'rename' ? 'Profile renamed' : 'Profile saved';
+      lastMessage = dialogMode === 'rename' ? t('opt_profileRenamed') : t('opt_profileSaved');
       externalChangeNotice = false;
       renderAll({ write: true });
       $('profileSelect').focus();
     } catch (error) {
-      $('profileName').setCustomValidity(error?.message || 'Could not save this profile.');
+      $('profileName').setCustomValidity(error?.message || t('opt_cannotSaveThis'));
       $('profileName').reportValidity();
     }
   }
@@ -366,10 +367,10 @@
       draftOrigin = settingsCopy(draftSettings);
       draftSource = 'profile';
       externalChangeNotice = false;
-      lastMessage = 'Profile saved';
+      lastMessage = t('opt_profileSaved');
       renderAll();
     } catch {
-      lastMessage = 'Could not save profile';
+      lastMessage = t('opt_cannotSave');
       renderStatus();
     }
   }
@@ -378,7 +379,7 @@
     if (profileStoreReadOnly) return;
     const selected = currentProfile();
     if (!selected) return;
-    $('deleteDialogCopy').textContent = `“${selected.name}” will be removed. Current video settings will stay unchanged.`;
+    $('deleteDialogCopy').textContent = t('opt_deleteConfirmDesc', { name: selected.name });
     $('deleteDialog').showModal();
     $('cancelDelete').focus();
   }
@@ -394,11 +395,11 @@
       loadCurrentDraft();
       $('deleteDialog').close();
       externalChangeNotice = false;
-      lastMessage = 'Profile deleted';
+      lastMessage = t('opt_profileDeleted');
       renderAll({ write: true });
       $('profileSelect').focus();
     } catch {
-      lastMessage = 'Could not delete profile';
+      lastMessage = t('opt_cannotDelete');
       renderStatus();
     }
   }
@@ -434,7 +435,7 @@
         if (loaded.needsWrite) {
           const migratedStore = loaded.store;
           chrome.storage.local.set({ [Profiles.STORE_KEY]: migratedStore })
-            .catch(error => enterProfileStoreReadOnly(error, 'Could not update profiles'));
+            .catch(error => enterProfileStoreReadOnly(error, t('opt_cannotUpdate')));
         }
       } catch (error) {
         enterProfileStoreReadOnly(error);
@@ -506,10 +507,22 @@
       renderFpsLimitScale();
       writeForm(draftSettings);
       bindEvents();
+      document.title = t('opt_title');
+      FramegenI18n.translatePage();
       renderAll();
       if (loaded.needsWrite) await persistStore();
     } catch (error) {
-      enterProfileStoreReadOnly(error, 'Settings unavailable');
+      enterProfileStoreReadOnly(error, t('opt_unavailable'));
+    }
+    const langSel = $('langSelect');
+    if (langSel) {
+      langSel.value = FramegenI18n.getLang();
+      langSel.onchange = () => {
+        FramegenI18n.setLang(langSel.value);
+        FramegenI18n.translatePage();
+        document.title = t('opt_title');
+        renderAll();
+      };
     }
   }
 

@@ -45,11 +45,11 @@
 <div class="wrap">
   <div class="title"><span class="dot" id="dot"></span>Framegen <span class="ver" id="ver"></span></div>
   <div class="tabs">
-    <button id="tabStatus" class="act">Status</button>
-    <button id="tabHelp">Help</button>
+    <button id="tabStatus" class="act" data-i18n="popup_status">Status</button>
+    <button id="tabHelp" data-i18n="popup_help">Help</button>
   </div>
   <button id="fullSettings" class="full-settings" type="button">
-    <span>Full settings</span>
+    <span data-i18n="popup_fullSettings">Full settings</span>
     <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
       <path fill="currentColor" d="M3 2h4v2H4v8h8V9h2v4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Zm6 0h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2Z"/>
     </svg>
@@ -60,36 +60,36 @@
     <div id="stat"></div>
     <hr>
     <div id="sys"></div>
-    <div class="hint">Controls and settings live inside the player: hover a video,
+    <div class="hint" data-i18n="popup_hint">Controls and settings live inside the player: hover a video,
       the FG and ⚙ buttons appear on the left.</div>
   </div>
 
   <div id="help" style="display:none">
-    <h4>"No GPU adapter" / does not start</h4>
-    <p>WebGPU is switched off in your Chrome - the fix takes a minute:</p>
+    <h4 data-i18n="popup_help_noGpu">"No GPU adapter" / does not start</h4>
+    <p data-i18n-html="popup_help_noGpuDesc">WebGPU is switched off in your Chrome - the fix takes a minute:</p>
     <ol>
-      <li>Open <b>chrome://settings/system</b></li>
-      <li>Enable "Use graphics acceleration when available"</li>
-      <li>Fully restart Chrome</li>
+      <li data-i18n-html="popup_help_step_openSettings">Open <b>chrome://settings/system</b></li>
+      <li data-i18n="popup_help_step_enableAccel">Enable "Use graphics acceleration when available"</li>
+      <li data-i18n="popup_help_step_restart">Fully restart Chrome</li>
     </ol>
-    <p>Still nothing? Update the GPU driver from NVIDIA/AMD/Intel - old drivers
+    <p data-i18n="popup_help_driverHint">Still nothing? Update the GPU driver from NVIDIA/AMD/Intel - old drivers
        get blocklisted by Chrome.</p>
-    <h4>Two GPUs (laptop)</h4>
-    <p>Chrome on Windows often lands on the integrated GPU - fps barely improves.</p>
+    <h4 data-i18n="popup_help_dualGpu">Two GPUs (laptop)</h4>
+    <p data-i18n="popup_help_dualGpuDesc">Chrome on Windows often lands on the integrated GPU - fps barely improves.</p>
     <ol>
-      <li>Windows Settings → System → Display → Graphics</li>
-      <li>Add Chrome → High performance</li>
-      <li>Fully restart Chrome</li>
+      <li data-i18n="popup_help_step_winGraphics">Windows Settings → System → Display → Graphics</li>
+      <li data-i18n="popup_help_step_addChrome">Add Chrome → High performance</li>
+      <li data-i18n="popup_help_step_restart">Fully restart Chrome</li>
     </ol>
-    <p>Check: the GPU line on the Status tab should show the discrete card.</p>
-    <h4>Requirements</h4>
-    <p>Recent desktop Chrome/Edge and a GPU from roughly 2016 or newer.
+    <p data-i18n="popup_help_dualGpuCheck">Check: the GPU line on the Status tab should show the discrete card.</p>
+    <h4 data-i18n="popup_help_requirements">Requirements</h4>
+    <p data-i18n="popup_help_requirementsDesc">Recent desktop Chrome/Edge and a GPU from roughly 2016 or newer.
        Firefox, Safari and phones - no.</p>
-    <h4>How to use</h4>
-    <p>Hover any video → the FG (on/off) and ⚙ (settings) buttons appear on the left.
+    <h4 data-i18n="popup_help_howToUse">How to use</h4>
+    <p data-i18n="popup_help_howToUseDesc">Hover any video → the FG (on/off) and ⚙ (settings) buttons appear on the left.
        Settings include Compare - an original/processed split slider.</p>
-    <h4>What does not work</h4>
-    <p>Netflix, Crunchyroll and other DRM sites - the browser never hands us their
+    <h4 data-i18n="popup_help_notWork">What does not work</h4>
+    <p data-i18n="popup_help_notWorkDesc">Netflix, Crunchyroll and other DRM sites - the browser never hands us their
        pixels, a platform limitation. On some sites the video may reload for a couple
        of seconds the first time you enable FG (CORS) - that is normal.</p>
   </div>
@@ -98,9 +98,11 @@
     <a href="https://github.com/MONZikWasTaken/Framegen" target="_blank">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="#7ab8ff"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.5 7.5 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
       GitHub</a>
-    <span class="v">Framegen · free for personal use</span>
+    <button id="langSwitch" style="border:none;background:none;color:#9aa0aa;font:11px system-ui;cursor:pointer;padding:2px 5px;border-radius:4px;transition:background .15s" onmouseover="this.style.background='#2a2d33'" onmouseout="this.style.background='none'">🌐 EN</button>
+    <span class="v" data-i18n="popup_footer_license">Framegen · free for personal use</span>
   </div>
 </div>
+<script src="i18n.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

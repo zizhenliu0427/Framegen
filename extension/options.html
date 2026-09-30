@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Framegen settings</title>
   <link rel="stylesheet" href="options.css">
+  <script defer src="i18n.js"></script>
   <script defer src="profile-store.js"></script>
   <script defer src="options.js"></script>
 </head>
@@ -13,11 +14,16 @@
     <div class="brand">
       <span class="brand-dot" aria-hidden="true"></span>
       <strong>Framegen</strong>
-      <h1>Advanced settings</h1>
+      <h1 data-i18n="opt_heading">Advanced settings</h1>
       <span class="version">v1.4.7</span>
     </div>
     <div class="header-actions">
-      <div id="runtimeStatus" class="runtime-status" role="status" aria-live="polite">Loading settings…</div>
+      <div id="runtimeStatus" class="runtime-status" role="status" aria-live="polite" data-i18n="opt_loading">Loading settings…</div>
+      <select id="langSelect" style="background:#1e2025;color:#b0b5bd;border:1px solid #33363d;border-radius:6px;font:11px system-ui;padding:3px 8px;cursor:pointer;outline:none" aria-label="Language">
+        <option value="en">English</option>
+        <option value="en_GB">English (AU)</option>
+        <option value="zh">中文</option>
+      </select>
       <a class="icon-link" href="https://github.com/MONZikWasTaken/Framegen"
         target="_blank" rel="noopener noreferrer" aria-label="Open Framegen on GitHub">
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
@@ -30,40 +36,40 @@
   <div class="app-shell">
     <main class="workspace">
       <div class="profile-toolbar">
-        <label for="profileSelect">Profile</label>
+        <label for="profileSelect" data-i18n="opt_profile">Profile</label>
         <select id="profileSelect" aria-describedby="runtimeStatus"></select>
         <div class="profile-actions" aria-label="Profile actions">
-          <button id="newProfile" class="button" type="button">New profile</button>
-          <button id="duplicateProfile" class="button button-quiet" type="button">Duplicate</button>
-          <button id="renameProfile" class="button button-quiet" type="button">Rename</button>
-          <button id="deleteProfile" class="button button-danger" type="button">Delete</button>
+          <button id="newProfile" class="button" type="button" data-i18n="opt_newProfile">New profile</button>
+          <button id="duplicateProfile" class="button button-quiet" type="button" data-i18n="opt_duplicate">Duplicate</button>
+          <button id="renameProfile" class="button button-quiet" type="button" data-i18n="opt_rename">Rename</button>
+          <button id="deleteProfile" class="button button-danger" type="button" data-i18n="opt_delete">Delete</button>
         </div>
       </div>
 
       <form id="settingsForm" novalidate>
         <section class="settings-section" aria-labelledby="interpolationHeading">
           <div class="section-heading">
-            <h2 id="interpolationHeading">Frame generation</h2>
-            <p>Output cadence, model, and internal render cost.</p>
+            <h2 id="interpolationHeading" data-i18n="opt_frameGen">Frame generation</h2>
+            <p data-i18n="opt_frameGenSectionDesc">Output cadence, model, and internal render cost.</p>
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="fg">Frame generation</label>
-              <p id="fgHint">Generate intermediate frames during video playback.</p>
+              <label for="fg" data-i18n="opt_frameGen">Frame generation</label>
+              <p id="fgHint" data-i18n="opt_frameGenHint">Generate intermediate frames during video playback.</p>
             </div>
             <input id="fg" name="fg" class="switch" type="checkbox" aria-describedby="fgHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="factor">Output rate</label>
-              <p id="factorHint">Follow the display, request a custom rate, or use a source multiplier.</p>
+              <label for="factor" data-i18n="opt_outputRate">Output rate</label>
+              <p id="factorHint" data-i18n="opt_outputRateHint">Follow the display, request a custom rate, or use a source multiplier.</p>
             </div>
             <select id="factor" name="factor" aria-describedby="factorHint">
-              <option value="auto">Auto</option>
-              <option value="hz">Match display</option>
-              <option value="target">Custom FPS</option>
+              <option value="auto" data-i18n="opt_auto">Auto</option>
+              <option value="hz" data-i18n="opt_matchDisplay">Match display</option>
+              <option value="target" data-i18n="opt_customFps">Custom FPS</option>
               <option value="2">2× source</option>
               <option value="3">3× source</option>
               <option value="4">4× source</option>
@@ -74,8 +80,8 @@
 
           <div id="targetFpsRow" class="setting-row" hidden>
             <div class="setting-copy">
-              <label for="targetFps">Custom FPS</label>
-              <p id="targetFpsHint">Request 2–1000 FPS. The result stays at least 2× source and within display/GPU limits.</p>
+              <label for="targetFps" data-i18n="opt_customFps">Custom FPS</label>
+              <p id="targetFpsHint" data-i18n="opt_customFpsHint">Request 2–1000 FPS. The result stays at least 2× source and within display/GPU limits.</p>
             </div>
             <input id="targetFps" name="targetFps" class="number-input" type="number"
               min="2" max="1000" step="0.01" inputmode="decimal" aria-describedby="targetFpsHint">
@@ -83,11 +89,11 @@
 
           <div id="fpsLimitRow" class="setting-row setting-row-range" hidden>
             <div class="setting-copy">
-              <label for="fpsLimit">FPS limit</label>
-              <p id="fpsLimitHint">Choose a common ceiling. Auto may run lower to stay smooth.</p>
+              <label for="fpsLimit" data-i18n="opt_fpsLimit">FPS limit</label>
+              <p id="fpsLimitHint" data-i18n="opt_fpsLimitHint">Choose a common ceiling. Auto may run lower to stay smooth.</p>
             </div>
             <div class="range-control">
-              <span id="fpsLimitValue" class="range-value">Unlimited</span>
+              <span id="fpsLimitValue" class="range-value" data-i18n="opt_unlimited">Unlimited</span>
               <input id="fpsLimit" name="fpsLimit" type="range" min="0" max="17"
                 step="1" value="17" aria-label="FPS limit" aria-valuetext="Unlimited"
                 aria-describedby="fpsLimitHint fpsLimitValue">
@@ -97,8 +103,8 @@
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="res">Quality</label>
-              <p id="resHint">Internal interpolation resolution. Higher values use more GPU time.</p>
+              <label for="res" data-i18n="opt_quality">Quality</label>
+              <p id="resHint" data-i18n="opt_qualityHint">Internal interpolation resolution. Higher values use more GPU time.</p>
             </div>
             <select id="res" name="res" aria-describedby="resHint">
               <option value="288">Low power · 288p</option>
@@ -111,8 +117,8 @@
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="model">Model</label>
-              <p id="modelHint">v7 small is the current production model. v6 remains for compatibility.</p>
+              <label for="model" data-i18n="opt_model">Model</label>
+              <p id="modelHint" data-i18n="opt_modelHint">v7 small is the current production model. v6 remains for compatibility.</p>
             </div>
             <select id="model" name="model" aria-describedby="modelHint">
               <option value="v7s">v7 small · current</option>
@@ -123,51 +129,51 @@
 
         <section class="settings-section" aria-labelledby="processingHeading">
           <div class="section-heading">
-            <h2 id="processingHeading">Enhancements</h2>
-            <p>Optional image processing and scene-specific safeguards.</p>
+            <h2 id="processingHeading" data-i18n="opt_enhancements">Enhancements</h2>
+            <p data-i18n="opt_enhancementsDesc">Optional image processing and scene-specific safeguards.</p>
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="sr">Upscale</label>
-              <p id="srHint">Apply 2× neural upscaling to generated frames, or to video when frame generation is off.</p>
+              <label for="sr" data-i18n="opt_upscale">Upscale</label>
+              <p id="srHint" data-i18n="opt_upscaleHint">Apply 2× neural upscaling to generated frames, or to video when frame generation is off.</p>
             </div>
             <input id="sr" name="sr" class="switch" type="checkbox" aria-describedby="srHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="hdr">HDR</label>
-              <p id="hdrHint">Expand brightness on a compatible HDR display.</p>
+              <label for="hdr" data-i18n="opt_hdr">HDR</label>
+              <p id="hdrHint" data-i18n="opt_hdrHint">Expand brightness on a compatible HDR display.</p>
             </div>
             <input id="hdr" name="hdr" class="switch" type="checkbox" aria-describedby="hdrHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="sharpness">Sharpness</label>
-              <p id="sharpnessHint">Edge enhancement for the WebGPU canvas. High can create halos.</p>
+              <label for="sharpness" data-i18n="opt_sharpness">Sharpness</label>
+              <p id="sharpnessHint" data-i18n="opt_sharpnessHint">Edge enhancement for the WebGPU canvas. High can create halos.</p>
             </div>
             <select id="sharpness" name="sharpness" aria-describedby="sharpnessHint">
-              <option value="0">Off</option>
-              <option value="1">Low</option>
-              <option value="2">Medium</option>
-              <option value="3">High</option>
+              <option value="0" data-i18n="opt_off">Off</option>
+              <option value="1" data-i18n="opt_low">Low</option>
+              <option value="2" data-i18n="opt_medium">Medium</option>
+              <option value="3" data-i18n="opt_high_level">High</option>
             </select>
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="anime">Animation mode</label>
-              <p id="animeHint">Reduce artifacts when animation repeats the same source frame.</p>
+              <label for="anime" data-i18n="opt_anime">Animation mode</label>
+              <p id="animeHint" data-i18n="opt_animeHint">Reduce artifacts when animation repeats the same source frame.</p>
             </div>
             <input id="anime" name="anime" class="switch" type="checkbox" aria-describedby="animeHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="guard">Subtitle protection</label>
-              <p id="guardHint">Protect static text and subtitles from interpolation warping.</p>
+              <label for="guard" data-i18n="opt_guard">Subtitle protection</label>
+              <p id="guardHint" data-i18n="opt_guardHint">Protect static text and subtitles from interpolation warping.</p>
             </div>
             <input id="guard" name="guard" class="switch" type="checkbox" aria-describedby="guardHint">
           </div>
@@ -175,54 +181,54 @@
 
         <section class="settings-section" aria-labelledby="playerHeading">
           <div class="section-heading">
-            <h2 id="playerHeading">Player</h2>
-            <p>Controls and diagnostics shown over video.</p>
+            <h2 id="playerHeading" data-i18n="opt_player">Player</h2>
+            <p data-i18n="opt_playerDesc">Controls and diagnostics shown over video.</p>
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="hoverReveal">Hover controls</label>
-              <p id="hoverRevealHint">Reveal Framegen controls when the pointer is over a video.</p>
+              <label for="hoverReveal" data-i18n="opt_hoverControls">Hover controls</label>
+              <p id="hoverRevealHint" data-i18n="opt_hoverControlsHint">Reveal Framegen controls when the pointer is over a video.</p>
             </div>
             <input id="hoverReveal" name="hoverReveal" class="switch" type="checkbox" aria-describedby="hoverRevealHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="showFps">FPS counter</label>
-              <p id="showFpsHint">Show output frame rate in the player overlay.</p>
+              <label for="showFps" data-i18n="opt_fpsCounter">FPS counter</label>
+              <p id="showFpsHint" data-i18n="opt_fpsCounterHint">Show output frame rate in the player overlay.</p>
             </div>
             <input id="showFps" name="showFps" class="switch" type="checkbox" aria-describedby="showFpsHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="showWatermark">Watermark</label>
-              <p id="showWatermarkHint">Show the Framegen label while interpolation is active.</p>
+              <label for="showWatermark" data-i18n="opt_watermark">Watermark</label>
+              <p id="showWatermarkHint" data-i18n="opt_watermarkHint">Show the Framegen label while interpolation is active.</p>
             </div>
             <input id="showWatermark" name="showWatermark" class="switch" type="checkbox" aria-describedby="showWatermarkHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="showWarnings">Warnings</label>
-              <p id="showWarningsHint">Show optional performance notices. Errors always remain visible.</p>
+              <label for="showWarnings" data-i18n="opt_warnings">Warnings</label>
+              <p id="showWarningsHint" data-i18n="opt_warningsHint">Show optional performance notices. Errors always remain visible.</p>
             </div>
             <input id="showWarnings" name="showWarnings" class="switch" type="checkbox" aria-describedby="showWarningsHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="compare">Compare</label>
-              <p id="compareHint">Show an original and processed split view.</p>
+              <label for="compare" data-i18n="opt_compare">Compare</label>
+              <p id="compareHint" data-i18n="opt_compareHint">Show an original and processed split view.</p>
             </div>
             <input id="compare" name="compare" class="switch" type="checkbox" aria-describedby="compareHint">
           </div>
 
           <div class="setting-row">
             <div class="setting-copy">
-              <label for="debug">Debug overlay</label>
-              <p id="debugHint">Show the processing border and detailed runtime telemetry.</p>
+              <label for="debug" data-i18n="opt_debug">Debug overlay</label>
+              <p id="debugHint" data-i18n="opt_debugHint">Show the processing border and detailed runtime telemetry.</p>
             </div>
             <input id="debug" name="debug" class="switch" type="checkbox" aria-describedby="debugHint">
           </div>
@@ -230,11 +236,11 @@
       </form>
 
       <div class="action-bar">
-        <strong id="editState" role="status" aria-live="polite">Up to date</strong>
+        <strong id="editState" role="status" aria-live="polite" data-i18n="opt_upToDate">Up to date</strong>
         <div class="action-buttons">
-          <button id="resetDraft" class="button button-quiet" type="button">Reset</button>
-          <button id="saveProfile" class="button button-secondary" type="button">Save profile</button>
-          <button id="applySettings" class="button button-primary" type="button">Apply</button>
+          <button id="resetDraft" class="button button-quiet" type="button" data-i18n="opt_reset">Reset</button>
+          <button id="saveProfile" class="button button-secondary" type="button" data-i18n="opt_saveProfile">Save profile</button>
+          <button id="applySettings" class="button button-primary" type="button" data-i18n="opt_apply">Apply</button>
         </div>
       </div>
     </main>
@@ -242,23 +248,23 @@
 
   <dialog id="profileDialog" aria-labelledby="profileDialogTitle">
     <form id="profileDialogForm" method="dialog">
-      <h2 id="profileDialogTitle">New profile</h2>
-      <label for="profileName">Profile name</label>
+      <h2 id="profileDialogTitle" data-i18n="opt_newProfile">New profile</h2>
+      <label for="profileName" data-i18n="opt_profileName">Profile name</label>
       <input id="profileName" name="profileName" type="text" maxlength="48" autocomplete="off" required>
       <div class="dialog-actions">
-        <button class="button button-quiet" value="cancel" type="button" data-close-dialog>Cancel</button>
-        <button id="confirmProfile" class="button button-primary" value="default" type="submit">Create</button>
+        <button class="button button-quiet" value="cancel" type="button" data-close-dialog data-i18n="opt_cancel">Cancel</button>
+        <button id="confirmProfile" class="button button-primary" value="default" type="submit" data-i18n="opt_create">Create</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="deleteDialog" aria-labelledby="deleteDialogTitle">
     <form method="dialog">
-      <h2 id="deleteDialogTitle">Delete profile?</h2>
-      <p id="deleteDialogCopy">This profile will be removed. Current video settings will stay unchanged.</p>
+      <h2 id="deleteDialogTitle" data-i18n="opt_deleteProfile">Delete profile?</h2>
+      <p id="deleteDialogCopy" data-i18n="opt_deleteProfileDesc">This profile will be removed. Current video settings will stay unchanged.</p>
       <div class="dialog-actions">
-        <button id="cancelDelete" class="button button-quiet" value="cancel" type="button" data-close-dialog>Cancel</button>
-        <button id="confirmDelete" class="button button-danger-solid" value="default" type="submit">Delete</button>
+        <button id="cancelDelete" class="button button-quiet" value="cancel" type="button" data-close-dialog data-i18n="opt_cancel">Cancel</button>
+        <button id="confirmDelete" class="button button-danger-solid" value="default" type="submit" data-i18n="opt_delete">Delete</button>
       </div>
     </form>
   </dialog>
