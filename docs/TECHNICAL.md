@@ -75,6 +75,10 @@ cross-origin iframe players):
 - own glass player UI (the canvas covers native controls): play/seek/volume,
   fullscreen, click-to-pause, compare slider (original | interpolated),
   optional HDR via inverse tone mapping, debug telemetry HUD
+- RTX Video mode: presented frames leave the canvas as `VideoFrame`s through a
+  `MediaStreamTrackGenerator` into a `<video>`, so NVIDIA RTX VSR and RTX HDR
+  (which only touch video layers) enhance the interpolated output; the canvas
+  then renders at source resolution and TinySR/ITM step aside
 - just-in-time GPU scheduling: each mid is submitted one compute-time before
   its display slot; presentation delay is ~2 frame-times, not a whole batch
 - the dedup readback is pipelined (a GPU→CPU roundtrip never blocks the frame
@@ -114,6 +118,7 @@ from any movies you have locally.
 - **DRM sites (Netflix, Crunchyroll/EME) cannot work** - the browser hands us
   black frames by design. YouTube and plain `<video>`/MSE sites are fine.
 - SDR sources only get *simulated* HDR (inverse tone mapping, RTX-Video-HDR
-  style) - the browser never exposes true HDR video data.
+  style, or the real RTX Video HDR in RTX Video mode) - the browser never
+  exposes true HDR video data.
 - Interpolation is honest about impossible cases: 5 fps sources have too little
   information between frames; artifacts on fast motion are expected there.

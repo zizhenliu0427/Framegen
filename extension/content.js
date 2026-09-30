@@ -38,7 +38,7 @@
   const MODELS = { v6: 'rt_tfact2', v7s: 'rt_v7s' };
   const FPS_LIMIT_STEPS = Profiles.FPS_LIMIT_PRESETS;
   const cfg = { factor: 'auto', targetFps: 120, fpsLimit: null, anime: true, debug: false, res: 480, hoverReveal: true, compare: false,
-    fg: true, sr: false, hdr: false, canvas4k: false, macHdrFix: true, fillDisplay: false, nativeHdr: 'original', nativeHdrGain: 1, autoSites: [], autoSmall: false, autoAds: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
+    fg: true, sr: false, hdr: false, rtxVideo: 'auto', canvas4k: false, macHdrFix: true, fillDisplay: false, nativeHdr: 'original', nativeHdrGain: 1, autoSites: [], autoSmall: false, autoAds: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
   function sanitizeCfg() {
     const legacyTarget = cfg.factor === 'fps60' ? 60 : cfg.factor === 'fps120' ? 120 : null;
     cfg.factor = Cadence.sanitizeOutputRate(cfg.factor);
@@ -49,7 +49,7 @@
     if (![0, 1, 2, 3].includes(cfg.sharpness)) cfg.sharpness = 0;
     cfg.anime = !!cfg.anime; cfg.debug = !!cfg.debug;
     cfg.hoverReveal = !!cfg.hoverReveal; cfg.compare = !!cfg.compare;
-    cfg.fg = !!cfg.fg; cfg.sr = !!cfg.sr; cfg.hdr = !!cfg.hdr; cfg.canvas4k = !!cfg.canvas4k; cfg.macHdrFix = cfg.macHdrFix !== false; cfg.fillDisplay = !!cfg.fillDisplay;
+    cfg.fg = !!cfg.fg; cfg.sr = !!cfg.sr; cfg.hdr = !!cfg.hdr; cfg.rtxVideo = cfg.rtxVideo === 'off' ? 'off' : 'auto'; cfg.canvas4k = !!cfg.canvas4k; cfg.macHdrFix = cfg.macHdrFix !== false; cfg.fillDisplay = !!cfg.fillDisplay;
     if (!['off', 'original', 'fix', 'real'].includes(cfg.nativeHdr)) cfg.nativeHdr = 'original';
     if (![0.7, 0.85, 1, 1.2, 1.4].includes(Number(cfg.nativeHdrGain))) cfg.nativeHdrGain = 1;
     cfg.nativeHdrGain = Number(cfg.nativeHdrGain);
@@ -93,6 +93,7 @@
       const incomingFpsLimit = ch.fpsLimit?.newValue;
       const previousFg = cfg.fg;
       const previousSr = cfg.sr;
+      const previousRtx = cfg.rtxVideo;
       const previousCompare = cfg.compare;
       for (const k in ch) {
         if (!(k in cfg)) continue;
@@ -117,12 +118,13 @@
         resetOutputCadence(true);
       }
       if (previousCompare && !cfg.compare) cmpRing = [];
-      if ('hdr' in ch || 'sharpness' in ch) configureOverlay();
+      if ('hdr' in ch || 'sharpness' in ch || 'rtxVideo' in ch) configureOverlay();
       if ('nativeHdr' in ch && running) applyNativeHdr();
       else if ('nativeHdrGain' in ch && running) configureOverlay();
       if ('sr' in ch && cfg.sr && device) ensureSR().catch(e => log('sr sync', e));
-      if (['fg', 'sr', 'hdr', 'sharpness', 'compare'].some(key => Object.hasOwn(ch, key))) {
-        reconcilePresentationMode(previousNeedsCanvas, previousSr !== cfg.sr);
+      if (['fg', 'sr', 'hdr', 'sharpness', 'compare', 'rtxVideo'].some(key => Object.hasOwn(ch, key))) {
+        reconcilePresentationMode(previousNeedsCanvas,
+          previousSr !== cfg.sr || previousRtx !== cfg.rtxVideo);
       }
       if (runtimeChanged && running && videoEl && !toggling) {
         toggling = true;
@@ -532,6 +534,7 @@
     panel.querySelector('#fcAutoSmall').checked = cfg.autoSmall;
     panel.querySelector('#fcAutoAds').checked = cfg.autoAds;
     panel.querySelector('#fcSR').checked = cfg.sr;
+    panel.querySelector('#fcRtx').checked = cfg.rtxVideo === 'auto';
     panel.querySelector('#fc4K').checked = cfg.canvas4k;
     panel.querySelector('#fcFill').checked = cfg.fillDisplay;
     panel.querySelector('#fcMacHdr').checked = cfg.macHdrFix;
@@ -567,6 +570,13 @@
     setRowEnabled(panel.querySelector('#fcNativeHdrGain'),
       hdrSource && (cfg.nativeHdr === 'fix' || cfg.nativeHdr === 'real'));
     setRowEnabled(panel.querySelector('#fcMacHdr'), IS_MAC);
+    // RTX Video takes over upscaling and SDR->HDR: our own versions would be undone
+    // (TinySR) or stacked (ITM) under the driver's. Hardware without it never sees
+    // the row at all.
+    const rtx = cfg.rtxVideo === 'auto' && sys.rtxOk;
+    panel.querySelector('#fcRtx').closest('.fc-row').style.display = sys.rtxOk ? '' : 'none';
+    setRowEnabled(panel.querySelector('#fcSR'), !rtx);
+    setRowEnabled(panel.querySelector('#fcHDR'), sys.hdrOk && !rtx);
     // auto-enable refinements only matter once this site is on the allowlist
     setRowEnabled(panel.querySelector('#fcAutoSmall'), autoSiteEnabled());
     setRowEnabled(panel.querySelector('#fcAutoAds'), autoSiteEnabled());
@@ -652,11 +662,14 @@
     sourceVideo: null, sourceVideoId: 0, sourceChangedAtFullscreen: false,
     mediaTime: null, presentedFrames: null, repeatedMediaCallbacks: 0,
     rvfcCalls: 0, rafCalls: 0, inferenceCalls: 0, prepCalls: 0, presentCalls: 0,
-    duplicateSkips: 0, cutSkips: 0, fullscreenEvents: 0,
+    duplicateSkips: 0, cutSkips: 0, fullscreenEvents: 0, rtxWritten: 0, rtxSkipped: 0,
     pumpStarts: 0, sourceLoopStarts: 0, loopStops: 0, sampleAt: performance.now(),
     sample: null,
   };
-  const sys = { gpu: '-', f16: false, hdrOk: false, hdrOn: false };
+  // rtxOk: this machine can have NVIDIA RTX Video (decided with the adapter);
+  // rtxOn: frames currently go out through the RTX Video <video>
+  const sys = { gpu: '-', f16: false, hdrOk: false, hdrOn: false, rtxOk: false, rtxOn: false };
+  const IS_WINDOWS = navigator.userAgentData?.platform === 'Windows' || /^Win/.test(navigator.platform);
   try { sys.hdrOk = !!(window.matchMedia && matchMedia('(dynamic-range: high)').matches); } catch {}
 
   const benchSessionErrors = [];
@@ -731,7 +744,7 @@
     // Until the first exact sample arrives, reserve a conservative per-output
     // budget. Devices without timestamp-query keep this stable default: separate
     // queue-drain timers overlap and cannot be added without double-counting.
-    return cfg.sr && sys.f16 && needsNeuralUpscale(sourceWidth, sourceHeight)
+    return cfg.sr && sys.f16 && !sys.rtxOn && needsNeuralUpscale(sourceWidth, sourceHeight)
       ? (srCostMs || 4)
       : 0;
   }
@@ -1366,7 +1379,7 @@
   // armed.  Its native path can be visibly sharper than a canvas on Windows.
   // The overlay is only needed when a feature actually changes pixels.
   function needsCanvasPresentation() {
-    return cfg.fg || (cfg.sr && sys.f16) || (cfg.hdr && sys.hdrOk)
+    return cfg.fg || (cfg.sr && sys.f16 && !sys.rtxOn) || (cfg.hdr && sys.hdrOk && !sys.rtxOn)
       || cfg.sharpness > 0 || cfg.compare;
   }
 
@@ -1389,10 +1402,11 @@
     queue = []; curJob = null; lastTex = null; cmpRing = [];
     lastPresentedSourceTex = null;
     lastPresentedTex = null;
-    if (overlay) {
-      overlay.style.opacity = '0';
-      overlay.style.visibility = 'hidden';
-      overlay.style.pointerEvents = 'none';
+    const view = overlayView();
+    if (view) {
+      view.style.opacity = '0';
+      view.style.visibility = 'hidden';
+      view.style.pointerEvents = 'none';
     }
     return true;
   }
@@ -1415,9 +1429,9 @@
       lastTex = null;
       lastPresentedSourceTex = null;
       lastPresentedTex = null;
-      overlay.style.opacity = '0';
+      overlayView().style.opacity = '0';
     }
-    overlay.style.display = 'block';
+    overlayView().style.display = 'block';
     positionOverlay();
     return true;
   }
@@ -1434,7 +1448,7 @@
   function diagnosticSnapshot(now = performance.now()) {
     const v = videoEl;
     const elapsed = Math.max(1, now - diag.sampleAt);
-    const css = overlay?.getBoundingClientRect();
+    const css = overlayView()?.getBoundingClientRect();
     const count = (name) => diag[name] - (diag.sample?.[name] || 0);
     const rate = (name) => (count(name) * 1000 / elapsed).toFixed(1);
     const snapshot = {
@@ -1463,6 +1477,10 @@
       canvas: { backing: overlay ? [overlay.width, overlay.height] : null,
         css: css ? [Math.round(css.width), Math.round(css.height)] : null, dpr: devicePixelRatio,
         objectFit: overlayFitRequested, resolvedObjectFit: overlayFit, fitSupported: overlayFitSupported },
+      rtxVideo: sys.rtxOn ? { playback: rtxVideo?.getVideoPlaybackQuality ? (q => ({
+          total: q.totalVideoFrames, dropped: q.droppedVideoFrames }))(rtxVideo.getVideoPlaybackQuality()) : null,
+        size: rtxVideo ? [rtxVideo.videoWidth, rtxVideo.videoHeight] : null,
+        written: diag.rtxWritten, skipped: diag.rtxSkipped } : null,
     };
     diag.sampleAt = now;
     diag.sample = snapshot;
@@ -1472,13 +1490,25 @@
 
   // Chrome on Windows IGNORES powerPreference (crbug.com/369219127): on dual-GPU
   // machines we get whatever GPU Chrome runs on. Detect integrated ones and tell
-  // the user how to move Chrome to the discrete card.
+  // the user how to move Chrome to the discrete card. Passing it there anyway only
+  // earns a console warning that lands on the extension's error page, so the hint
+  // goes out only where it still works (dual-GPU Macs).
+  const ADAPTER_OPTIONS = IS_WINDOWS ? {} : { powerPreference: 'high-performance' };
   function classifyAdapter(adapter) {
     sys.f16 = adapter.features.has('shader-f16');
     const inf = adapter.info || {};
     sys.gpu = inf.description || [inf.vendor, inf.architecture].filter(Boolean).join(' ') || 'unknown GPU';
     sys.integrated = /intel|iris|uhd|graphics 6|vega|radeon\(tm\) graphics|apu/i.test(sys.gpu)
       && !/nvidia|geforce|rtx|gtx|radeon rx|arc a|arc b/i.test(sys.gpu);
+    // RTX Video lives only in NVIDIA's Windows driver, on Turing and newer (tensor
+    // cores). Chrome shares one GPU between WebGPU and its compositor, so the
+    // adapter is also the GPU that would run VSR. Elsewhere the <video> detour
+    // would cost a copy and enhance nothing. An unknown NVIDIA architecture is a
+    // newer one: Chrome names every older family.
+    sys.rtxOk = IS_WINDOWS && typeof MediaStreamTrackGenerator === 'function'
+      && /nvidia/i.test(inf.vendor || sys.gpu)
+      && !/fermi|kepler|maxwell|pascal|volta/i.test(inf.architecture || '');
+    syncConditionalRows();
   }
   // lightweight probe for the popup: adapter info only, no device, no weights
   let probing = null;
@@ -1486,7 +1516,7 @@
     if (sys.gpu !== '-' || !navigator.gpu) return;
     if (!probing) probing = (async () => {
       try {
-        const a = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        const a = await navigator.gpu.requestAdapter(ADAPTER_OPTIONS);
         if (a) classifyAdapter(a);
       } catch { /* leave unknown */ }
     })();
@@ -1574,6 +1604,7 @@
     downPipe = null;
     capBgs = new WeakMap();
     sys.hdrOn = false;
+    closeRtxStream();
 
     try { overlayCtx?.unconfigure(); } catch {}
     device = null;
@@ -1589,10 +1620,11 @@
     running = false;
     switching = true;
 
-    if (overlay) {
-      overlay.style.transition = 'none';
-      overlay.style.opacity = '0';
-      overlay.style.display = 'none';
+    const view = overlayView();
+    if (view) {
+      view.style.transition = 'none';
+      view.style.opacity = '0';
+      view.style.display = 'none';
     }
     if (hud) {
       hud.style.display = 'block';
@@ -1715,7 +1747,7 @@
     if (!device) {
       const GPU_HELP = 'WebGPU is off. Enable "Use graphics acceleration" in Chrome settings (chrome://settings/system), restart Chrome, and update your GPU driver. Very old GPUs are not supported.';
       if (!navigator.gpu) throw new Error(GPU_HELP);
-      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+      const adapter = await navigator.gpu.requestAdapter(ADAPTER_OPTIONS);
       if (!adapter) throw new Error(GPU_HELP);
       const f16 = adapter.features.has('shader-f16');
       const feats = f16 ? ['shader-f16'] : [];
@@ -1882,7 +1914,7 @@
     const [capW, capH] = canvasCap(fw, fh);
     const s = Math.min(1, capW / fw, capH / fh);
     const sw = Math.round(fw * s), sh = Math.round(fh * s);
-    if (cfg.sr && sys.f16 && needsNeuralUpscale(sw, sh)) return [sw, sh];
+    if (cfg.sr && sys.f16 && !sys.rtxOn && needsNeuralUpscale(sw, sh)) return [sw, sh];
     if (overlay?.width && overlay?.height) return [overlay.width, overlay.height];
     return [sw, sh];
   }
@@ -2012,20 +2044,106 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       + 'opacity:0; transition:opacity .25s;';
     overlayCtx = overlay.getContext('webgpu');
     blitSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
-    // on native-controls players the overlay OWNS the pointer (pointer-events:auto
-    // set in start): dblclick must never reach the native video, whose shadow-DOM
-    // handler fullscreens the bare <video> where our canvas cannot exist
-    overlay.addEventListener('click', () => {
+    bindOverlayPointer(overlay);
+    configureOverlay();
+  }
+  // on native-controls players the overlay OWNS the pointer (pointer-events:auto
+  // set in start): dblclick must never reach the native video, whose shadow-DOM
+  // handler fullscreens the bare <video> where our canvas cannot exist
+  function bindOverlayPointer(el) {
+    el.addEventListener('click', () => {
       if (!videoEl || !videoEl.controls) return;
       if (videoEl.paused) videoEl.play().catch(() => {}); else videoEl.pause();
       flashCenter(svgIcon(videoEl.paused ? 'pause' : 'play', 30));
       updateBar();
     });
-    overlay.addEventListener('dblclick', (e) => {
+    el.addEventListener('dblclick', (e) => {
       e.preventDefault();
       if (videoEl && videoEl.controls) toggleFullscreen();
     });
-    configureOverlay();
+  }
+
+  // ---------- RTX Video presentation ----------
+  // NVIDIA RTX Video (VSR / RTX HDR) runs inside Chromium's video compositor and
+  // never touches a canvas. In this mode the canvas is only a render target: every
+  // presented frame goes out as a VideoFrame through a MediaStreamTrackGenerator
+  // into our own <video>, which the driver upscales / HDR-maps like any other video
+  // (verified on Edge with web/rtx_probe.html, also with the site's own video still
+  // playing underneath). The canvas then renders at source resolution so VSR, not
+  // a bilinear canvas stretch, does the upscaling. The <video> lives in a closed
+  // shadow root so site scripts and biggestVideo() never mistake it for the source.
+  let rtxHost = null, rtxVideo = null, rtxGen = null, rtxWriter = null, rtxInflight = 0;
+  function overlayView() { return sys.rtxOn && rtxHost ? rtxHost : overlay; }
+  function ensureRtxView() {
+    if (rtxHost) return;
+    rtxHost = document.createElement('framegen-video');
+    rtxHost.style.cssText = 'position:absolute; display:none; pointer-events:none; z-index:2;'
+      + 'opacity:0; transition:opacity .25s;';
+    rtxVideo = document.createElement('video');
+    rtxVideo.muted = true;
+    rtxVideo.autoplay = true;
+    rtxVideo.playsInline = true;
+    rtxVideo.disablePictureInPicture = true;
+    rtxVideo.disableRemotePlayback = true;
+    rtxVideo.style.cssText = 'display:block; width:100%; height:100%;';
+    rtxHost.attachShadow({ mode: 'closed' }).appendChild(rtxVideo);
+    bindOverlayPointer(rtxHost);
+  }
+  function openRtxStream() {
+    rtxGen = new MediaStreamTrackGenerator({ kind: 'video' });
+    rtxWriter = rtxGen.writable.getWriter();
+    rtxInflight = 0;
+    rtxVideo.srcObject = new MediaStream([rtxGen]);
+    rtxVideo.play().catch(() => {});
+  }
+  function closeRtxStream() {
+    if (!rtxGen) return;
+    try { rtxWriter.releaseLock(); } catch {}
+    try { rtxGen.stop(); } catch {}
+    rtxGen = null;
+    rtxWriter = null;
+    rtxInflight = 0;
+    if (rtxVideo) rtxVideo.srcObject = null;
+  }
+  function setRtxPresentation(on) {
+    on = on && sys.rtxOk;
+    if (on === sys.rtxOn) return;
+    const from = overlayView();
+    if (on) ensureRtxView();
+    sys.rtxOn = on;
+    const to = overlayView();
+    if (!on) closeRtxStream();
+    resetFramePoolOnNextCapture = true; // backing and SR move between source/display size
+    lastPresentedSourceTex = null;
+    lastPresentedTex = null;
+    if (from && to && from !== to) {
+      to.style.display = from.style.display;
+      to.style.opacity = '0'; // present() reveals it once it carries a frame
+      from.style.opacity = '0';
+      from.style.display = 'none';
+    }
+    if (running) positionOverlay();
+  }
+  // after present()'s submit: the canvas' current texture is the finished frame
+  function pushRtxFrame() {
+    if (!rtxGen) openRtxStream();
+    // the sink normally takes a frame at once; a backlog means the compositor side
+    // stalled, and queueing more would only add latency
+    if (rtxInflight > 1) { diag.rtxSkipped++; return; }
+    let frame;
+    try {
+      frame = new VideoFrame(overlay, { timestamp: Math.round(performance.now() * 1000) });
+    } catch {
+      diag.rtxSkipped++;
+      return;
+    }
+    const gen = rtxGen;
+    rtxInflight++;
+    rtxWriter.write(frame).then(() => { diag.rtxWritten++; }, e => {
+      if (gen === rtxGen) log('rtx write', e);
+    }).finally(() => { if (gen === rtxGen) rtxInflight--; });
+    // Chrome pauses muted video-only elements it considers hidden (background tab)
+    if (rtxVideo.paused) rtxVideo.play().catch(() => {});
   }
 
   const BLIT_VS = `
@@ -2203,7 +2321,10 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
       const knee = hdrPeak / 2;
       return n <= knee ? n : knee + (hdrPeak - knee) * (1 - Math.exp(-(n - knee) / (hdrPeak - knee)));
     });
-    let hdr = !!(sys.hdrOk && (cfg.hdr || nativeFix));
+    // RTX Video maps SDR->HDR itself, so our ITM stays off there; the native-HDR fix
+    // modes need the fp16 extended-range canvas, which a VideoFrame cannot carry
+    const rtx = cfg.rtxVideo === 'auto' && sys.rtxOk && !nativeFix;
+    let hdr = !!(sys.hdrOk && ((cfg.hdr && !rtx) || nativeFix));
     const fmt = hdr ? 'rgba16float' : 'rgba8unorm';
     try {
       overlayCtx.configure({ device, format: fmt, alphaMode: 'opaque',
@@ -2274,6 +2395,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       fragment: { module: mod, entryPoint: 'fs', targets: [{ format: hdr ? 'rgba16float' : 'rgba8unorm' }] } });
     blitBg.clear(); // bind groups belong to the old pipeline layout
     sys.hdrOn = hdr;
+    setRtxPresentation(rtx);
     if (running && lastPresentedSourceTex) {
       const repaintTex = lastPresentedSourceTex;
       const textureGeneration = presentationTextureGeneration;
@@ -2368,6 +2490,10 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     if (overlay.parentElement !== videoEl.parentElement) {
       videoEl.parentElement.insertBefore(overlay, videoEl.nextSibling);
     }
+    if (sys.rtxOn && rtxHost.parentElement !== videoEl.parentElement) {
+      videoEl.parentElement.insertBefore(rtxHost, overlay.nextSibling);
+    }
+    const view = overlayView();
     reparentUI();
     const r = vrIn || videoEl.getBoundingClientRect();
     if (r.width < 8 || r.height < 8) return;
@@ -2389,19 +2515,20 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     if (fit === 'scale-down' && sourceWidth && sourceHeight) {
       fit = sourceWidth <= r.width && sourceHeight <= r.height ? 'none' : 'contain';
     }
-    overlay.style.objectFit = fit;
-    overlay.style.objectPosition = videoStyle.objectPosition;
+    const media = sys.rtxOn ? rtxVideo : overlay;
+    media.style.objectFit = fit;
+    media.style.objectPosition = videoStyle.objectPosition;
     // self-calibrating placement: measure where the overlay actually landed and nudge
     // by the delta - immune to whatever containing block/margins the site uses
-    const cur = overlay.getBoundingClientRect();
+    const cur = view.getBoundingClientRect();
     const dx = r.left - cur.left, dy = r.top - cur.top;
     if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-      overlay.style.left = ((parseFloat(overlay.style.left) || 0) + dx) + 'px';
-      overlay.style.top = ((parseFloat(overlay.style.top) || 0) + dy) + 'px';
+      view.style.left = ((parseFloat(view.style.left) || 0) + dx) + 'px';
+      view.style.top = ((parseFloat(view.style.top) || 0) + dy) + 'px';
     }
-    overlay.style.width = r.width + 'px';
-    overlay.style.height = r.height + 'px';
-    overlay.style.outline = cfg.debug ? '3px solid #19c37d' : 'none';
+    view.style.width = r.width + 'px';
+    view.style.height = r.height + 'px';
+    view.style.outline = cfg.debug ? '3px solid #19c37d' : 'none';
     let bw = r.width * devicePixelRatio, bh = r.height * devicePixelRatio;
     let supported = fit === 'fill' || !!(sourceWidth && sourceHeight);
     if (fit === 'none' && supported) {
@@ -2421,18 +2548,22 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     if (supported !== overlayFitSupported || fit !== overlayFit || sourceDimensionsChanged) {
       overlayFitSupported = supported;
       overlayFit = fit;
-      overlay.style.opacity = '0';
+      view.style.opacity = '0';
       queue = []; curJob = null; lastTex = null; cmpRing = [];
       pairSeq++;
       if (cfg.debug && !supported) log('object-fit fallback to raw video', overlayFitRequested, bw, bh);
     }
     const canvasActive = needsCanvasPresentation();
-    overlay.style.visibility = supported && canvasActive ? 'visible' : 'hidden';
+    view.style.visibility = supported && canvasActive ? 'visible' : 'hidden';
     syncHdrAnchor(r, supported && canvasActive && running && sys.hdrOn);
-    overlay.style.pointerEvents = supported && canvasActive && videoEl.controls ? 'auto' : 'none';
+    view.style.pointerEvents = supported && canvasActive && videoEl.controls ? 'auto' : 'none';
     if (!supported || !canvasActive) return;
     const [capW, capH] = canvasCap(videoEl.videoWidth, videoEl.videoHeight);
-    const cap = Math.min(1, capW / bw, capH / bh);
+    // RTX Video: never stretch past the source - VSR only engages on upscaling and
+    // does it far better than our bilinear canvas resize
+    const sourceCap = sys.rtxOn && sourceWidth && sourceHeight
+      ? Math.min(sourceWidth / bw, sourceHeight / bh) : 1;
+    const cap = Math.min(1, capW / bw, capH / bh, sourceCap);
     bw = Math.round(bw * cap);
     bh = Math.round(bh * cap);
     if (overlay.width !== bw || overlay.height !== bh) { overlay.width = bw; overlay.height = bh; }
@@ -2484,7 +2615,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     // canvas. It used to be generated-frames-only as a GPU saving, but that
     // alternates sharp/soft at display rate - visible shimmer, worst on
     // low-res anime (field report 2026-07-13).
-    if (cfg.sr && sys.f16) {
+    if (cfg.sr && sys.f16 && !sys.rtxOn) {
       if (!sr) { ensureSR().catch(e => log('sr', e)); }
       else if (needsNeuralUpscale(tex.width, tex.height)) { // marginal upscale = invisible after the canvas downsample
         const key = tex.width + 'x' + tex.height;
@@ -2564,11 +2695,13 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     }
     pass.end();
     device.queue.submit([enc.finish()]);
+    if (sys.rtxOn) pushRtxFrame();
     diag.presentCalls++;
-    if (overlay.style.opacity !== '1') {
-      overlay.style.transition = ''; // back to the stylesheet fade (onSrcChange kills it)
-      overlay.style.visibility = 'visible';
-      overlay.style.opacity = '1'; // reveal only once pixels exist
+    const view = overlayView();
+    if (view.style.opacity !== '1') {
+      view.style.transition = ''; // back to the stylesheet fade (onSrcChange kills it)
+      view.style.visibility = 'visible';
+      view.style.opacity = '1'; // reveal only once pixels exist
     }
     const now = performance.now();
     fpsWin.push(now);
@@ -3950,13 +4083,14 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     overlayFitSupported = false;
     overlaySourceWidth = 0;
     overlaySourceHeight = 0;
-    if (overlay) {
+    const view = overlayView();
+    if (view) {
       // hide INSTANTLY: a fade would blend the dead stream's last frame over the
       // new one for 250ms. present() restores the transition on the next real frame
-      overlay.style.transition = 'none';
-      overlay.style.opacity = '0';
-      overlay.style.visibility = 'hidden';
-      overlay.style.pointerEvents = 'none';
+      view.style.transition = 'none';
+      view.style.opacity = '0';
+      view.style.visibility = 'hidden';
+      view.style.pointerEvents = 'none';
     }
   }
   function onPlaybackRateChange() {
@@ -4000,11 +4134,12 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     if (startEpoch !== playbackLoopEpoch || videoEl !== v) return;
     ensureOverlay();
     positionOverlay();
-    overlay.style.opacity = '0';
-    overlay.style.display = 'block';
+    const view = overlayView();
+    view.style.opacity = '0';
+    view.style.display = 'block';
     // native players: we own clicks (play/pause + our fullscreen). Sites with DOM
     // controls (YouTube etc.) keep the overlay transparent to the pointer.
-    overlay.style.pointerEvents = needsCanvasPresentation()
+    view.style.pointerEvents = needsCanvasPresentation()
       && overlayFitSupported && videoEl.controls ? 'auto' : 'none';
     // seed the canvas with the current video frame so the reveal is seamless -
     // no black flash while the first interpolated frames are still in flight
@@ -4067,11 +4202,13 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     diag.loopStops++;
     invalidatePlaybackLoops();
     const stopEpoch = playbackLoopEpoch;
-    if (overlay) { // fade out, then release - the raw video underneath is identical
-      overlay.style.opacity = '0';
+    const view = overlayView();
+    if (view) { // fade out, then release - the raw video underneath is identical
+      view.style.opacity = '0';
       setTimeout(() => {
-        if (!running && stopEpoch === playbackLoopEpoch && overlay) {
-          overlay.style.display = 'none';
+        if (!running && stopEpoch === playbackLoopEpoch && overlayView() === view) {
+          view.style.display = 'none';
+          closeRtxStream();
         }
       }, 260);
     }
@@ -4127,7 +4264,9 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       `f16: ${sys.f16 ? 'yes' : 'NO (slow path)'} · model: ${rtModel ? MODELS[rtModel] : MODELS[cfg.model] || cfg.model}`,
       `FG: ${cfg.fg ? 'on' : 'OFF'} · SR: ${srState}`,
       `output rate: ${rateState}`,
-      `HDR: ${!sys.hdrOk ? 'display not HDR' : (cfg.hdr ? (sys.hdrOn ? 'on (ITM)' : 'failed, SDR') : 'off')}`,
+      `HDR: ${!sys.hdrOk ? 'display not HDR' : sys.rtxOn ? 'left to RTX Video' : (cfg.hdr ? (sys.hdrOn ? 'on (ITM)' : 'failed, SDR') : 'off')}`,
+      `RTX Video: ${!sys.rtxOk ? 'not available (needs Windows + NVIDIA RTX)' : cfg.rtxVideo === 'off' ? 'off'
+        : sys.rtxOn ? `on · stream ${rtxVideo?.videoWidth || 0}x${rtxVideo?.videoHeight || 0}` : 'standby (native HDR mode)'}`,
       `sharpness: ${cfg.sharpness === 0 ? 'off' : cfg.sharpness}`,
       'flow upsample: edge-guided source warp',
       `status: ${running ? 'running' : 'stopped'}`];
@@ -4240,6 +4379,8 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
         <input class="fc-sw" type="checkbox" id="fcSR"></label>
       <label class="fc-row"><span>HDR<small>Brighter highlights on HDR displays</small></span>
         <input class="fc-sw" type="checkbox" id="fcHDR"></label>
+      <label class="fc-row"><span>RTX Video<small>Replaces Upscale and HDR · strength: NVIDIA App → System → Video</small></span>
+        <input class="fc-sw" type="checkbox" id="fcRtx"></label>
       <div class="fc-row"><span>HDR video<small>Native HDR sources on an HDR display</small></span>
         <select class="fc-sel" id="fcNativeHdr">
           <option value="original">Show original</option>
@@ -4344,6 +4485,13 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     panel.querySelector('#fc4K').onchange = event => {
       cfg.canvas4k = event.currentTarget.checked; saveCfg();
       if (running) positionOverlay(); // canvas resizes now, pools follow on the next capture
+    };
+    panel.querySelector('#fcRtx').onchange = event => {
+      const previousNeedsCanvas = needsCanvasPresentation();
+      cfg.rtxVideo = event.currentTarget.checked ? 'auto' : 'off'; saveCfg();
+      configureOverlay();
+      syncConditionalRows();
+      reconcilePresentationMode(previousNeedsCanvas, true);
     };
     const Hd = panel.querySelector('#fcHDR');
     Hd.onchange = () => {
