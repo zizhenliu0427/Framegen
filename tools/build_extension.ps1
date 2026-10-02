@@ -170,7 +170,8 @@ if ($PromoteLocalAssets) {
 Assert-ExactFiles -Directory $assetRoot -AllowedNames @(
     'rt_tfact2.bin', 'rt_tfact2.json',
     'rt_v7s.bin', 'rt_v7s.json',
-    'rt_sr.bin', 'rt_sr.json'
+    'rt_sr.bin', 'rt_sr.json',
+    'pq_ramp.mp4', 'hlg_ramp.mp4'
 )
 foreach ($stem in $modelStems) {
     Assert-ModelBundle -Stem $stem -Directory $assetRoot
@@ -191,7 +192,8 @@ if (!$stage.StartsWith($tempBase, [System.StringComparison]::OrdinalIgnoreCase))
 try {
     $stageDir = Join-Path $stage 'framegen-extension'
     New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
-    Get-ChildItem -LiteralPath $extensionRoot | Where-Object { $_.Name -notlike '_*' } |
+    # _locales is the one underscore entry that belongs to us (default_locale needs it)
+    Get-ChildItem -LiteralPath $extensionRoot | Where-Object { $_.Name -notlike '_*' -or $_.Name -eq '_locales' } |
         ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stageDir $_.Name) -Recurse -Force
         }

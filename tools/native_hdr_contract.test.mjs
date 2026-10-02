@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
+
+createRequire(import.meta.url)('../extension/i18n.js');
+const { t, setLang } = globalThis.FramegenI18n;
 
 const content = await readFile(new URL('../extension/content.js', import.meta.url), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
@@ -47,7 +51,13 @@ test('calibration ramps ship with the extension and are web accessible', async (
 
 test('native HDR defaults to the original video and the experimental modes are labelled', () => {
   assert.match(content, /nativeHdr: 'original'/);
-  assert.match(content, /<option value="fix">Gentle HDR \(experimental\)<\/option>/);
-  assert.match(content, /<option value="real">Real HDR \(experimental\)<\/option>/);
+  assert.match(content, /<option value="fix">\$\{t\('panel_gentleHdr'\)\}<\/option>/);
+  assert.match(content, /<option value="real">\$\{t\('panel_realHdr'\)\}<\/option>/);
+  assert.equal(t('panel_gentleHdr'), 'Gentle HDR (experimental)');
+  assert.equal(t('panel_realHdr'), 'Real HDR (experimental)');
+  setLang('zh');
+  assert.match(t('panel_gentleHdr'), /实验/, 'the experimental label must survive translation');
+  assert.match(t('panel_realHdr'), /实验/);
+  setLang('en');
   assert.match(content, /function syncConditionalRows\(\)/);
 });

@@ -5,6 +5,8 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const Profiles = require('../extension/profile-store.js');
+require('../extension/i18n.js');
+const { t } = globalThis.FramegenI18n;
 const contentJs = readFileSync(new URL('../extension/content.js', import.meta.url), 'utf8');
 const optionsHtml = readFileSync(new URL('../extension/options.html', import.meta.url), 'utf8');
 const optionsCss = readFileSync(new URL('../extension/options.css', import.meta.url), 'utf8');
@@ -471,7 +473,7 @@ test('advanced page keeps compact toolbar and exposes exact target FPS controls'
   }
 
   const factorSelect = optionsHtml.match(/<select id="factor"[\s\S]*?<\/select>/)?.[0] || '';
-  const factorOptions = [...factorSelect.matchAll(/<option value="(auto|hz|target|[2-6])">/g)]
+  const factorOptions = [...factorSelect.matchAll(/<option value="(auto|hz|target|[2-6])"[\s>]/g)]
     .map(match => match[1]);
   assert.deepEqual(factorOptions, ['auto', 'hz', 'target', '2', '3', '4', '5', '6']);
   assert.match(optionsHtml, /class="profile-toolbar"/);
@@ -493,8 +495,10 @@ test('advanced page keeps actions visible and reserves scroll space for the fixe
 });
 
 test('options controller exposes virtual Current first and keeps preview, save, and apply separate', () => {
-  assert.match(optionsJs, /current\.textContent = 'Current settings'/);
-  assert.match(optionsJs, /group\.label = 'My profiles'/);
+  assert.match(optionsJs, /current\.textContent = t\('opt_currentSettings'\)/);
+  assert.match(optionsJs, /group\.label = t\('opt_myProfiles'\)/);
+  assert.equal(t('opt_currentSettings'), 'Current settings');
+  assert.equal(t('opt_myProfiles'), 'My profiles');
   assert.match(optionsJs, /selectedProfileId = null/);
   assert.match(optionsJs, /function loadCurrentDraft\(\)/);
   assert.match(optionsJs, /Profiles\.loadStore\(/);
@@ -516,7 +520,7 @@ test('extension exposes the full-page configurator without replacing popup statu
   assert.match(contentJs, /const VERSION = '1\.4\.7'/);
   assert.match(optionsHtml, /<span class="version">v1\.4\.7<\/span>/);
   assert.deepEqual(manifest.options_ui, { page: 'options.html', open_in_tab: true });
-  assert.deepEqual(manifest.content_scripts[0].js, ['cadence.js', 'profile-store.js', 'content.js']);
+  assert.deepEqual(manifest.content_scripts[0].js, ['i18n.js', 'cadence.js', 'profile-store.js', 'content.js']);
   assert.deepEqual(manifest.background, { service_worker: 'background.js' });
   assert.match(optionsHtml, /id="runtimeStatus"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(popupHtml, /id="tabStatus"/);

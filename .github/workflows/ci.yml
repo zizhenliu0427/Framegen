@@ -23,6 +23,7 @@ jobs:
           node --check extension/options.js
           node --check extension/popup.js
           node --check extension/profile-store.js
+          node --check extension/i18n.js
           node --check extension/rt/rt.js
           node --check extension/rt/sr.js
           node --check web/player_worker.js

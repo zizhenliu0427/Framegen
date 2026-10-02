@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import test from 'node:test';
+
+createRequire(import.meta.url)('../extension/i18n.js');
+const { t } = globalThis.FramegenI18n;
 
 const [content, optionsHtml, popupHtml] = await Promise.all([
   readFile(new URL('../extension/content.js', import.meta.url), 'utf8'),
@@ -79,5 +83,6 @@ test('quick settings expose no native title tooltips or obsolete brand dot', () 
     assert.doesNotMatch(source, /\btitle\s*=\s*["']/);
   }
   assert.doesNotMatch(content, /fc-brand-dot/);
-  assert.match(content, /aria-label="Open Framegen on GitHub"/);
+  assert.match(content, /aria-label="\$\{t\('opt_githubLabel'\)\}"/);
+  assert.equal(t('opt_githubLabel'), 'Open Framegen on GitHub');
 });

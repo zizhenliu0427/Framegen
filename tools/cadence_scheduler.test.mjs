@@ -5,6 +5,9 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+// manifest order: cadence.js picks up FramegenI18n.t when it loads
+require('../extension/i18n.js');
+const { t } = globalThis.FramegenI18n;
 const Cadence = require('../extension/cadence.js');
 const extensionDirectory = fileURLToPath(new URL('../extension/', import.meta.url));
 
@@ -1215,7 +1218,7 @@ test('storage values preserve new modes and reject invalid targets', () => {
 
 test('extension loads the helper first and exposes every output-rate choice', () => {
   const manifest = JSON.parse(readFileSync(`${extensionDirectory}/manifest.json`, 'utf8'));
-  assert.deepEqual(manifest.content_scripts[0].js, ['cadence.js', 'profile-store.js', 'content.js']);
+  assert.deepEqual(manifest.content_scripts[0].js, ['i18n.js', 'cadence.js', 'profile-store.js', 'content.js']);
   const content = readFileSync(`${extensionDirectory}/content.js`, 'utf8');
   const cadenceSource = readFileSync(`${extensionDirectory}/cadence.js`, 'utf8');
   for (const value of ['auto', 'hz', 'target', '2', '3', '4', '5', '6']) {
@@ -1223,7 +1226,8 @@ test('extension loads the helper first and exposes every output-rate choice', ()
   }
   assert.doesNotMatch(content, /<option value="fps(?:60|120)">/);
   assert.match(content, /id="fcTargetFps"/);
-  assert.match(content, /<span>Output rate/);
+  assert.match(content, /<span>\$\{t\('panel_outputRate'\)\}/);
+  assert.equal(t('panel_outputRate'), 'Output rate');
   assert.match(content, /function usesExactCadence\(\)/);
   assert.match(content, /cfg\.factor === 'auto' && cfg\.fpsLimit !== null/,
     'only finite Auto targets should use the exact presentation clock');
