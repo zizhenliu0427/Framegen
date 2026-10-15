@@ -2,7 +2,7 @@
   'use strict';
   const t = globalThis.FramegenI18n ? globalThis.FramegenI18n.t : (k => k);
 
-  const DISPLAY_RATES = Object.freeze([360, 240, 180, 165, 144, 120, 100, 90, 75, 72, 60, 50]);
+  const DISPLAY_RATES = Object.freeze([360, 240, 180, 165, 160, 144, 120, 100, 90, 75, 72, 60, 50]);
   const COMMON_VIDEO_RATES = Object.freeze([
     24000 / 1001, 24, 25, 30000 / 1001, 30, 48000 / 1001, 48, 50,
     60000 / 1001, 60, 72, 75, 90, 100, 120000 / 1001, 120,
@@ -18,6 +18,14 @@
   const DISPLAY_CLAMP_HEADROOM = 0.97;
   const REFRESH_TRANSITION_SAMPLES = 10;
   const NOMINAL_RATE_TOLERANCE = 0.03;
+  // How far below nominal a measurement may sit and still be granted the full
+  // nominal capacity. Tighter than the label tolerance: a real 160Hz panel is 3.03%
+  // under 165 and a 175Hz one 2.8% under 180 - at 3% they were scheduled at the
+  // neighbour's rate (160Hz right on the edge, flipping with rAF jitter) and
+  // dropped the surplus frames.
+  const NOMINAL_CAPACITY_TOLERANCE = 0.02;
+  // floor / mean rAF interval below this = callbacks outrun the presenting display
+  const DISPLAY_SERVICE_MISMATCH = 0.9;
   const VIDEO_RATE_NORMALIZE_TOLERANCE = 0.015;
   const VIDEO_RATE_HOLD_TOLERANCE = 0.03;
   const VIDEO_RATE_MATCH_TOLERANCE = 0.005;
@@ -316,11 +324,26 @@
     // 110Hz up to a 120Hz label must never authorize 120 presentations/second.
     // A nominal panel measured slightly slow (e.g. 120Hz ProMotion seen as ~118Hz
     // through rAF jitter) keeps its nominal capacity; 110Hz never snaps (>3% off).
-    const nearNominal = displayHz === nearest && rawHz >= nearest * (1 - NOMINAL_RATE_TOLERANCE);
+    const nearNominal = displayHz === nearest && rawHz >= nearest * (1 - NOMINAL_CAPACITY_TOLERANCE);
     const capacityHz = nearNominal
       ? nearest
       : Math.max(1, Math.round(Math.min(rawHz, displayHz) * 100) / 100);
     return { measured: true, rawHz, displayHz, capacityHz };
+  }
+
+  // The floor tracks the fastest consistent rAF interval, on the premise that
+  // longer intervals are only missed callbacks. That breaks when callbacks ride a
+  // faster clock than the surface they present to: Chrome ticking on a 240Hz
+  // primary monitor while the window sits on a 160Hz one alternates 4.2/8.3ms
+  // intervals, so the floor says 240 while only ~160 frames/second reach the
+  // screen and everything scheduled beyond that is dropped. A sustained mean far
+  // above the floor is that mismatch, not jitter: schedule against the mean.
+  function serviceLimitedFloorMs(floorMs, serviceIntervalMs, {
+    mismatch = DISPLAY_SERVICE_MISMATCH,
+  } = {}) {
+    if (!Number.isFinite(floorMs) || floorMs <= 0) return floorMs;
+    if (!Number.isFinite(serviceIntervalMs) || serviceIntervalMs <= 0) return floorMs;
+    return floorMs / serviceIntervalMs < mismatch ? serviceIntervalMs : floorMs;
   }
 
   function displaySampleTolerance(intervalMs) {
@@ -879,6 +902,7 @@
     rafStrainPressure,
     updateUniqueInterval,
     measureDisplayHz,
+    serviceLimitedFloorMs,
     updateDisplayInterval,
     resolveOutputRate,
     computePresentationDelayMs,

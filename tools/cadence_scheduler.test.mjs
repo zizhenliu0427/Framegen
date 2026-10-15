@@ -1362,6 +1362,73 @@ test('a 120Hz ProMotion panel measured slightly slow still allows 2x of 60fps', 
   assert.equal(refused.state, 'no-2x-display-range');
 });
 
+test('panels just under a listed rate are never scheduled at the neighbouring rate', () => {
+  // a real 160Hz panel, including measurements biased fast by rAF jitter
+  for (const measuredHz of [159.97, 160, 160.26, 160.77, 161.29]) {
+    const display = Cadence.measureDisplayHz(1000 / measuredHz);
+    assert.equal(display.displayHz, 160, `${measuredHz}Hz is a 160Hz panel`);
+    assert.equal(display.capacityHz, 160, `${measuredHz}Hz must not be granted 165 presentations/second`);
+    const full = Cadence.resolveOutputRate('hz', 1000 / measuredHz,
+      { sourceHz: 60, sourceReady: true, displayReady: true, fillDisplay: true });
+    assert.equal(full.outputHz, 160);
+  }
+  // 175Hz has no entry of its own: it may carry the 180 label, never its capacity
+  const ultrawide = Cadence.measureDisplayHz(1000 / 175);
+  assert.equal(ultrawide.capacityHz, 175);
+  // the real neighbours keep their own rate
+  assert.equal(Cadence.measureDisplayHz(1000 / 165).capacityHz, 165);
+  assert.equal(Cadence.measureDisplayHz(1000 / 164).capacityHz, 165);
+  assert.equal(Cadence.measureDisplayHz(1000 / 180).capacityHz, 180);
+});
+
+function deliveredFloor(intervalsMs) {
+  const state = { floorMs: 100, slowCandidateMs: 0, slowSamples: 0, stableSamples: 0 };
+  const window = [];
+  let effective = state.floorMs;
+  for (const d of intervalsMs) {
+    Cadence.updateDisplayInterval(state, d);
+    window.push(Math.min(d, state.floorMs * 3));
+    if (window.length > 128) window.shift();
+    const mean = window.length >= 64 ? window.reduce((a, b) => a + b, 0) / window.length : 0;
+    effective = Cadence.serviceLimitedFloorMs(state.floorMs, mean);
+  }
+  return { clockMs: state.floorMs, effectiveMs: effective };
+}
+
+test('rAF riding a faster monitor clock is scheduled at the rate actually delivered', () => {
+  assert.equal(Cadence.serviceLimitedFloorMs(1000 / 240, 6.25), 6.25);
+  assert.equal(Cadence.serviceLimitedFloorMs(1000 / 240, 1000 / 240 * 1.03), 1000 / 240,
+    'a few missed callbacks are jitter, not a slower display');
+  assert.equal(Cadence.serviceLimitedFloorMs(1000 / 240, 0), 1000 / 240, 'no service sample yet');
+
+  // measured on the 240Hz primary first, then the window presents to a 160Hz
+  // monitor while Chrome keeps ticking on the 240Hz clock: 1-2 ticks per scanout
+  const tick = 1000 / 240;
+  const mixed = [...Array(240).fill(tick), ...Array.from({ length: 480 }, (_, i) => (i % 2 ? 2 : 1) * tick)];
+  const { clockMs, effectiveMs } = deliveredFloor(mixed);
+  assert.ok(Math.abs(clockMs - tick) < 0.05, 'the clock itself stays latched at 240Hz');
+  const display = Cadence.measureDisplayHz(effectiveMs);
+  assert.equal(display.capacityHz, 160);
+  const plan = Cadence.resolveOutputRate('hz', effectiveMs,
+    { sourceHz: 25, sourceReady: true, displayReady: true });
+  assert.ok(plan.outputHz <= 160, `scheduled ${plan.outputHz}/s on a 160Hz surface`);
+
+  // a healthy 240Hz monitor with occasional misses keeps its full rate
+  const healthy = Array.from({ length: 480 }, (_, i) => (i % 40 === 0 ? 2 : 1) * tick);
+  const steady = deliveredFloor(healthy);
+  assert.equal(steady.effectiveMs, steady.clockMs);
+  assert.equal(Cadence.measureDisplayHz(steady.effectiveMs).capacityHz, 240);
+});
+
+test('the pump feeds the delivered rAF service into every display consumer', () => {
+  const content = readFileSync(`${extensionDirectory}/content.js`, 'utf8');
+  assert.match(content, /rafFloor = Cadence\.serviceLimitedFloorMs\(floorMs, trackRafService\(d, floorMs\)\)/);
+  assert.match(content, /const clamped = Math\.min\(sampleMs, floorMs \* 3\)/,
+    'one long hitch must not pose as a slower display');
+  assert.match(content, /const rafServiceSamples = new Float64Array\(RAF_SERVICE_WINDOW\)/,
+    'the per-frame service tracker must not allocate');
+});
+
 test('fillDisplay runs display Hz at the full panel rate, off by default', () => {
   const base = { sourceHz: 60, sourceReady: true, displayReady: true };
   const reserved = Cadence.resolveOutputRate('hz', 1000 / 240, base);

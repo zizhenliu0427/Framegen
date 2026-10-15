@@ -633,6 +633,24 @@
   }
   const UI_UPDATE_INTERVAL_MS = 1000 / 15;
   const refreshEstimate = { floorMs: rafFloor, slowCandidateMs: 0, slowSamples: 0, stableSamples: 0 };
+  // recent rAF intervals, each clamped at 3x the floor so one hitch cannot pose as
+  // a slower display: their mean is the presentation service actually delivered
+  // (see Cadence.serviceLimitedFloorMs). Preallocated - this runs every frame.
+  const RAF_SERVICE_WINDOW = 128, RAF_SERVICE_MIN_SAMPLES = 64;
+  const rafServiceSamples = new Float64Array(RAF_SERVICE_WINDOW);
+  let rafServiceCount = 0, rafServiceIdx = 0, rafServiceSum = 0;
+  function resetRafService() {
+    rafServiceCount = 0; rafServiceIdx = 0; rafServiceSum = 0;
+  }
+  function trackRafService(sampleMs, floorMs) {
+    const clamped = Math.min(sampleMs, floorMs * 3);
+    if (rafServiceCount === RAF_SERVICE_WINDOW) rafServiceSum -= rafServiceSamples[rafServiceIdx];
+    else rafServiceCount++;
+    rafServiceSamples[rafServiceIdx] = clamped;
+    rafServiceSum += clamped;
+    rafServiceIdx = (rafServiceIdx + 1) % RAF_SERVICE_WINDOW;
+    return rafServiceCount >= RAF_SERVICE_MIN_SAMPLES ? rafServiceSum / rafServiceCount : 0;
+  }
   let outputRatePlanKey = '';
   let outputRatePlanIdentity = null;
   let outputRatePlanSnapshot = null;
@@ -3300,13 +3318,19 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
         currentRafIntervalMs = d;
         rafMs = rafMs ? (d > rafMs ? rafMs * 0.6 + d * 0.4 : rafMs * 0.97 + d * 0.03) : d;
         Cadence.updateDisplayInterval(refreshEstimate, d);
-        rafFloor = refreshEstimate.floorMs;
-        const agrees = Math.abs(d - rafFloor) / rafFloor <= 0.06;
+        const floorMs = refreshEstimate.floorMs;
+        rafFloor = Cadence.serviceLimitedFloorMs(floorMs, trackRafService(d, floorMs));
+        const agrees = Math.abs(d - floorMs) / floorMs <= 0.06;
         refreshEstimate.stableSamples = agrees
           ? Math.min(32, refreshEstimate.stableSamples + 1)
           : 0;
       }
-      if (d >= 100) refreshEstimate.stableSamples = 0;
+      if (d >= 100) {
+        refreshEstimate.stableSamples = 0;
+        resetRafService();
+      }
+    } else {
+      resetRafService();
     }
     lastPumpT = now;
     // UI geometry is independent of display refresh. A fixed 15 Hz service rate
@@ -3435,7 +3459,8 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
           `prep ${activePrepCostMs().toFixed(1)} + mid ${activeMidCostMs().toFixed(1)}ms@${cfg.res}p`,
           `buf ${delayMs.toFixed(0)}`,
           `GPU ${load.toFixed(0)}%`,
-          `raf ${rafMs.toFixed(1)}/${rafFloor.toFixed(1)}`,
+          `raf ${rafMs.toFixed(1)}/${rafFloor.toFixed(1)}${rafFloor !== refreshEstimate.floorMs
+            ? ` (clock ${refreshEstimate.floorMs.toFixed(1)})` : ''}`,
           `late ${lateAvg.toFixed(1)}`,
           `drop ${dropped} (${dropPressure.toFixed(1)})`,
           `dup ${dups} cut ${cuts}`,
