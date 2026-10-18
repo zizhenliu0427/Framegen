@@ -38,6 +38,8 @@ with fixes I needed on macOS and bilibili. Everything else is upstream.
 - **Full refresh** toggle: Match display at 100% of the panel rate instead of 97% (off by default) ([#18](https://github.com/MONZikWasTaken/Framegen/issues/18))
 - **4K canvas** toggle: lifts the 1920x1080 canvas cap up to the source resolution (off by default) ([#12](https://github.com/MONZikWasTaken/Framegen/issues/12))
 - **HDR full-screen fix** (macOS only, on by default): keeps SDR→HDR correct when the video fills the screen ([#19](https://github.com/MONZikWasTaken/Framegen/issues/19))
+- **RTX Video support** (Windows + NVIDIA RTX, on by default): NVIDIA VSR / RTX HDR enhance the interpolated output instead of Upscale / SDR→HDR.
+  *RTX Video page fix* clears invisible page elements that keep the driver away from the video (a 1 px helper video, a blurred drawer clipped out of view) - why and how in [docs/rtx_video.md](docs/rtx_video.md)
 - **Auto-enable** per-site allowlist ([#2](https://github.com/MONZikWasTaken/Framegen/issues/2)): FG turns on by itself for a large, playing video on sites you opted in.
   Hover previews / mini windows and YouTube ads are skipped unless *Auto: small players* / *Auto: during ads* are on; picture-in-picture never qualifies.
   A manual off sticks for the current page.
