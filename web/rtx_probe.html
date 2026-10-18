@@ -11,6 +11,7 @@
   #hud.warn{color:#fc6}
   #stage{flex:1;position:relative;min-height:0;background:#000}
   #stage>video,#stage>canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none}
+  #tag{position:absolute;left:4px;top:4px;font:12px ui-monospace,monospace;color:#9a9;pointer-events:none}
 </style>
 <div id="bar">
   <label>mode <select id="mode">
@@ -33,6 +34,7 @@
 <div id="stage">
   <video id="out" muted playsinline loop></video>
   <canvas id="cv"></canvas>
+  <div id="tag"></div>
 </div>
 <script type="module">
 const $ = id => document.getElementById(id);
@@ -185,6 +187,7 @@ function teardown() {
 
 async function start() {
   teardown();
+  applySweep();
   const id = loopId;
   if (mode === 'A') {
     src.pause();
@@ -219,6 +222,38 @@ async function start() {
   loop(id);
 }
 
+// sweep (mode A): show the video at an exact upscale factor, in device pixels, to map
+// which factors RTX VSR engages at. <- / -> step, 0 leaves the sweep.
+const SWEEP = [1.5, 1.8, 2.0, 2.15, 2.3, 2.45, 2.6, 2.75, 2.9, 3.0, 3.15, 3.3, 3.5, 3.75, 4.0, 4.25, 4.5];
+let sweepIdx = -1;
+const SWEEP_PROPS = ['inset', 'left', 'top', 'width', 'height', 'object-fit'];
+function sweepTo(f) {
+  if (!SWEEP.includes(f)) { SWEEP.push(f); SWEEP.sort((a, b) => a - b); }
+  sweepIdx = SWEEP.indexOf(f);
+  applySweep();
+}
+window.sweepTo = sweepTo;
+if (Q.has('sweep')) sweepTo(Number(Q.get('sweep')));
+function applySweep() {
+  if (sweepIdx < 0 || mode !== 'A' || !out.videoWidth) {
+    for (const p of SWEEP_PROPS) out.style.removeProperty(p);
+    $('tag').textContent = '';
+    return;
+  }
+  const f = SWEEP[sweepIdx], d = devicePixelRatio, box = stage.getBoundingClientRect();
+  const w = out.videoWidth * f / d, h = out.videoHeight * f / d;
+  out.style.inset = 'auto';
+  out.style.left = (box.width - w) / 2 + 'px';
+  out.style.top = (box.height - h) / 2 + 'px';
+  out.style.width = w + 'px';
+  out.style.height = h + 'px';
+  out.style.objectFit = 'fill';
+  $('tag').textContent = `x${f.toFixed(2)}`;
+}
+out.addEventListener('loadedmetadata', applySweep);
+addEventListener('resize', applySweep);
+document.addEventListener('fullscreenchange', () => setTimeout(applySweep, 100));
+
 let lastPushed = 0, lastT = performance.now();
 setInterval(() => {
   const now = performance.now();
@@ -237,6 +272,12 @@ setInterval(() => {
       + (q && mode !== 'F' ? `  shown ${q.totalVideoFrames} dropped ${q.droppedVideoFrames}` : ''),
   ];
   if (up && up <= 1.0) lines.push('not upscaled: VSR will not engage - enlarge the window, go fullscreen, or use render size 50%');
+  if (sweepIdx >= 0 && mode === 'A' && out.videoWidth) {
+    const f = SWEEP[sweepIdx], box = stage.getBoundingClientRect();
+    const fits = out.videoWidth * f <= box.width * dpr + 0.5 && out.videoHeight * f <= box.height * dpr + 0.5;
+    lines.push(`sweep x${f.toFixed(2)}: ${(out.videoWidth * f).toFixed(1)}x${(out.videoHeight * f).toFixed(1)} device px`
+      + `  (<- -> step, 0 off)${fits ? '' : '  DOES NOT FIT - go fullscreen (F)'}`);
+  }
   if (lastErr) lines.push('error: ' + lastErr);
   hud.textContent = lines.join('\n');
   hud.className = lastErr || (up && up <= 1.0) ? 'warn' : '';
@@ -258,6 +299,11 @@ addEventListener('keydown', e => {
   const k = e.key.toUpperCase();
   if (k === 'F') toggleFs();
   else if ('ABCDEG'.includes(k) && k.length === 1) { mode = k; $('mode').value = mode; start(); }
+  else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    if (sweepIdx < 0) sweepIdx = SWEEP.indexOf(2.0);
+    else sweepIdx = Math.min(SWEEP.length - 1, Math.max(0, sweepIdx + (e.key === 'ArrowRight' ? 1 : -1)));
+    applySweep();
+  } else if (e.key === '0') { sweepIdx = -1; applySweep(); }
 });
 
 await initGpu();
