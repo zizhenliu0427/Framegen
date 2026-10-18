@@ -118,6 +118,114 @@ test('RTX canvas never renders above source resolution', () => {
   assert.match(position, /const cap = Math\.min\(1, capW \/ bw, capH \/ bh, sourceCap\);/);
 });
 
+function fakeNode(tag, [left, top, width, height], style = {}, parentElement = null) {
+  const props = new Map();
+  return {
+    tag, parentElement, isConnected: true, computed: { position: 'static', transform: 'none',
+      overflowX: 'visible', overflowY: 'visible', backdropFilter: 'none', ...style },
+    rect: [left, top, width, height],
+    getBoundingClientRect() {
+      const [l, t, w, h] = this.rect;
+      return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h };
+    },
+    style: {
+      getPropertyValue: k => props.get(k)?.[0] ?? '',
+      getPropertyPriority: k => props.get(k)?.[1] ?? '',
+      setProperty: (k, v, p = '') => props.set(k, [v, p]),
+      removeProperty: k => props.delete(k),
+    },
+    inline: k => props.get(k) ?? null,
+  };
+}
+
+test('invisible overlay blockers are cleared while RTX Video is on, and handed back', () => {
+  // yifan.tv at 2552x1308 CSS px: Chromium kept the video off the overlay path for
+  // a 1x1 autoplay-unlock <video> and an episode drawer parked outside the player
+  const html = fakeNode('html', [0, 0, 2552, 1308]);
+  const body = fakeNode('body', [0, 0, 2537, 5089], { overflowX: 'auto', overflowY: 'auto' }, html);
+  const player = fakeNode('div', [386.5, 64, 1223, 688],
+    { position: 'relative', overflowX: 'hidden', overflowY: 'hidden' }, body);
+  const video = fakeNode('video', [386.5, 64, 1223, 688], {}, player);
+  const host = fakeNode('app-player-media-list', [1609.5, 64, 0, 688], {}, player);
+  const drawer = fakeNode('div', [1609.5, 64, 420, 688],
+    { position: 'absolute', backdropFilter: 'blur(16px)' }, host);
+  const frostedBar = fakeNode('div', [386.5, 673, 1223, 80],
+    { position: 'absolute', backdropFilter: 'blur(8px)' }, player);
+  const sidebar = fakeNode('div', [1609.5, 64, 420, 688], { backdropFilter: 'blur(16px)' }, body);
+  const unlock = fakeNode('video', [0, 1307, 1, 1], { position: 'absolute' }, body);
+  const all = [body, player, video, host, drawer, frostedBar, sidebar, unlock];
+  const context = {
+    running: true, sys: { rtxOn: true }, videoEl: video, innerWidth: 2552, innerHeight: 1308, devicePixelRatio: 1.5,
+    performance: { now: () => 10000 },
+    document: { body, documentElement: html,
+      getElementsByTagName: tag => all.filter(n => tag === '*' || n.tag === tag) },
+    getComputedStyle: n => ({ ...n.computed, backdropFilter: n.style.getPropertyValue('backdrop-filter') || n.computed.backdropFilter }),
+  };
+  const state = content.match(/const hiddenStrayVideos = [^\n]*\n\s*let backdropCandidates = [^\n]*\n/);
+  assert.ok(state, 'blocker state declarations');
+  vm.runInNewContext(`${state[0]}${['saveInline', 'restoreInline', 'visibleBox', 'unseenOverPicture',
+    'clearOverlayBlockers', 'restoreOverlayBlockers'].map(functionSource).join('\n')}
+    this.clear = clearOverlayBlockers; this.restore = restoreOverlayBlockers;`, context);
+
+  context.clear();
+  assert.deepEqual(unlock.inline('visibility'), ['hidden', 'important']);
+  assert.deepEqual(drawer.inline('backdrop-filter'), ['none', 'important'], 'clipped-away drawer drops its blur');
+  assert.equal(frostedBar.inline('backdrop-filter'), null, 'a visible bar over the picture is the site\'s call');
+  assert.equal(sidebar.inline('backdrop-filter'), null, 'a visible neighbour keeps its blur');
+  assert.equal(video.inline('visibility'), null);
+
+  drawer.rect = [1189.5, 64, 420, 688]; // the user opens the episode list
+  context.clear();
+  assert.equal(drawer.inline('backdrop-filter'), null, 'blur back the moment it shows');
+  drawer.rect = [1609.5, 64, 420, 688];
+  context.clear();
+  assert.deepEqual(drawer.inline('backdrop-filter'), ['none', 'important'], 'and dropped again once it is parked');
+
+  context.restore();
+  assert.equal(drawer.inline('backdrop-filter'), null);
+  assert.equal(unlock.inline('visibility'), null);
+  assert.match(functionSource('stop'), /^function stop\(\) \{\s*veilSource\(false\);\s*restoreOverlayBlockers\(\);/);
+  assert.match(functionSource('setRtxPresentation'), /if \(!on\) \{[^}]*restoreOverlayBlockers\(\);/);
+});
+
+function fakeVideo(opacity = '', priority = '') {
+  const props = new Map(opacity ? [['opacity', [opacity, priority]]] : []);
+  return {
+    style: {
+      getPropertyValue: k => props.get(k)?.[0] ?? '',
+      getPropertyPriority: k => props.get(k)?.[1] ?? '',
+      setProperty: (k, v, p = '') => props.set(k, [v, p]),
+      removeProperty: k => props.delete(k),
+    },
+    inline: () => props.get('opacity') ?? null,
+  };
+}
+
+test('the site video goes transparent under the RTX output and comes back intact', () => {
+  const context = { sys: { rtxOn: true }, videoEl: fakeVideo('0.9', 'important'), sourceVeil: null };
+  vm.runInNewContext(`${functionSource('veilSource')}\nthis.veil = veilSource;`, context);
+  const first = context.videoEl;
+  context.veil(true);
+  assert.deepEqual(first.inline(), ['0', 'important']);
+  context.veil(true); // every presented frame re-asserts it, no state churn
+  context.videoEl = fakeVideo();
+  context.veil(true); // a new source: the old one gets its own opacity back first
+  assert.deepEqual(first.inline(), ['0.9', 'important']);
+  assert.deepEqual(context.videoEl.inline(), ['0', 'important']);
+  context.veil(false);
+  assert.equal(context.videoEl.inline(), null, 'no inline opacity left behind');
+  context.sys.rtxOn = false;
+  context.veil(true);
+  assert.equal(context.videoEl.inline(), null, 'canvas mode leaves the source alone');
+
+  const present = functionSource('present');
+  assert.match(present, /if \(sys\.rtxOn && rtxVideo\.readyState >= 2 && performance\.now\(\) - viewRevealedAt > 300\) veilSource\(true\);/);
+  assert.match(functionSource('stop'), /^function stop\(\) \{\s*veilSource\(false\);/);
+  for (const name of ['useNativePassthrough', 'onSrcChange', 'positionOverlay', 'handleDeviceLost', 'start']) {
+    assert.match(functionSource(name), /veilSource\(false\)/, `${name} must hand the source back`);
+  }
+});
+
 test('the output <video> is invisible to page scripts and to biggestVideo()', () => {
   assert.match(functionSource('ensureRtxView'), /attachShadow\(\{ mode: 'closed' \}\)\.appendChild\(rtxVideo\)/);
 });

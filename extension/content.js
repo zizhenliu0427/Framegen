@@ -1427,6 +1427,7 @@
       view.style.visibility = 'hidden';
       view.style.pointerEvents = 'none';
     }
+    veilSource(false);
     return true;
   }
 
@@ -1499,7 +1500,8 @@
       rtxVideo: sys.rtxOn ? { playback: rtxVideo?.getVideoPlaybackQuality ? (q => ({
           total: q.totalVideoFrames, dropped: q.droppedVideoFrames }))(rtxVideo.getVideoPlaybackQuality()) : null,
         size: rtxVideo ? [rtxVideo.videoWidth, rtxVideo.videoHeight] : null,
-        written: diag.rtxWritten, skipped: diag.rtxSkipped } : null,
+        written: diag.rtxWritten, skipped: diag.rtxSkipped,
+        hiddenStrayVideos: hiddenStrayVideos.size, droppedBackdrops: droppedBackdrops.size } : null,
     };
     diag.sampleAt = now;
     diag.sample = snapshot;
@@ -1645,6 +1647,7 @@
       view.style.opacity = '0';
       view.style.display = 'none';
     }
+    veilSource(false);
     if (hud) {
       hud.style.display = 'block';
       hud.textContent = t('hud_gpuReset');
@@ -2131,7 +2134,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (on) ensureRtxView();
     sys.rtxOn = on;
     const to = overlayView();
-    if (!on) closeRtxStream();
+    if (!on) { closeRtxStream(); veilSource(false); restoreOverlayBlockers(); }
     resetFramePoolOnNextCapture = true; // backing and SR move between source/display size
     lastPresentedSourceTex = null;
     lastPresentedTex = null;
@@ -2143,6 +2146,119 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     if (running) positionOverlay();
   }
+  // Chromium hands a video to the video processor - and so to RTX VSR / HDR - only as
+  // a DirectComposition overlay, and only one per frame: with the site's own video
+  // still drawn under ours, both fall back to GPU compositing (DCLayerResult 8, too
+  // many overlays). While our <video> shows frames, the source is made transparent -
+  // still decoding, still clickable - and drops out of the frame.
+  let sourceVeil = null; // { el, value, priority }: the site <video> and its inline opacity
+  let viewRevealedAt = 0;
+  function veilSource(on) {
+    if (on && sys.rtxOn && videoEl) {
+      if (sourceVeil && sourceVeil.el !== videoEl) veilSource(false);
+      if (!sourceVeil) {
+        sourceVeil = { el: videoEl, value: videoEl.style.getPropertyValue('opacity'),
+          priority: videoEl.style.getPropertyPriority('opacity') };
+      }
+      if (videoEl.style.getPropertyValue('opacity') !== '0') videoEl.style.setProperty('opacity', '0', 'important');
+      return;
+    }
+    if (!sourceVeil) return;
+    const { el, value, priority } = sourceVeil;
+    if (value) el.style.setProperty('opacity', value, priority);
+    else el.style.removeProperty('opacity');
+    sourceVeil = null;
+  }
+  // Two invisible things also keep a page off the overlay path (yifan.tv, where VSR
+  // came and went with the window width): any other <video> in the frame - there a
+  // 1x1 px autoplay-unlock clip (DCLayerResult 8) - and a backdrop-filter quad over
+  // the picture (11) - there an episode drawer parked just outside the overflow:hidden
+  // player, whose compositor quad still overlapped the picture's edge. While RTX
+  // Video is on, tiny videos are hidden and a backdrop-filter clipped out of sight
+  // is dropped until it slides into view.
+  const hiddenStrayVideos = new Map(), droppedBackdrops = new Map(); // el -> saved inline value
+  let backdropCandidates = [], backdropScanAt = 0;
+  function saveInline(el, prop) {
+    return { value: el.style.getPropertyValue(prop), priority: el.style.getPropertyPriority(prop) };
+  }
+  function restoreInline(el, prop, { value, priority }) {
+    if (value) el.style.setProperty(prop, value, priority);
+    else el.style.removeProperty(prop);
+  }
+  // el's border box, and that box cut by the viewport and by the overflow clips of
+  // its containing-block chain (a static ancestor never clips an absolute child)
+  function visibleBox(el) {
+    const box = el.getBoundingClientRect();
+    let { left, top, right, bottom } = box;
+    let position = getComputedStyle(el).position;
+    for (let a = el.parentElement; a && a !== document.body && a !== document.documentElement
+      && left < right && top < bottom; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      const contains = s.transform !== 'none'
+        || (position !== 'fixed' && (position !== 'absolute' || s.position !== 'static'));
+      if (!contains) continue;
+      position = s.position;
+      if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+      const c = a.getBoundingClientRect();
+      if (s.overflowX !== 'visible') { left = Math.max(left, c.left); right = Math.min(right, c.right); }
+      if (s.overflowY !== 'visible') { top = Math.max(top, c.top); bottom = Math.min(bottom, c.bottom); }
+    }
+    return { box, left: Math.max(left, 0), top: Math.max(top, 0),
+      right: Math.min(right, innerWidth), bottom: Math.min(bottom, innerHeight) };
+  }
+  function unseenOverPicture(el, r, px) {
+    if (!el.isConnected) return false;
+    const v = visibleBox(el), b = v.box;
+    return b.right > r.left - px && b.left < r.right + px && b.bottom > r.top - px && b.top < r.bottom + px
+      && (v.right - v.left < px || v.bottom - v.top < px);
+  }
+  function clearOverlayBlockers() {
+    for (const v of document.getElementsByTagName('video')) {
+      if (v === videoEl) continue;
+      const r = v.getBoundingClientRect();
+      const tiny = r.width > 0 && r.height > 0 && r.width * r.height <= 16;
+      if (tiny && !hiddenStrayVideos.has(v)) {
+        hiddenStrayVideos.set(v, saveInline(v, 'visibility'));
+        v.style.setProperty('visibility', 'hidden', 'important');
+      } else if (!tiny && hiddenStrayVideos.has(v)) {
+        restoreInline(v, 'visibility', hiddenStrayVideos.get(v));
+        hiddenStrayVideos.delete(v);
+      }
+    }
+    for (const v of hiddenStrayVideos.keys()) if (!v.isConnected) hiddenStrayVideos.delete(v);
+    const now = performance.now();
+    if (now - backdropScanAt > 2000) { // ~2-4 ms on a 2300-element page
+      backdropScanAt = now;
+      backdropCandidates = [];
+      for (const el of document.getElementsByTagName('*')) {
+        if (!droppedBackdrops.has(el) && getComputedStyle(el).backdropFilter !== 'none') backdropCandidates.push(el);
+      }
+    }
+    const r = videoEl.getBoundingClientRect(), px = 1 / devicePixelRatio;
+    for (const el of backdropCandidates) {
+      if (droppedBackdrops.has(el) || !unseenOverPicture(el, r, px)) continue;
+      droppedBackdrops.set(el, saveInline(el, 'backdrop-filter'));
+      el.style.setProperty('backdrop-filter', 'none', 'important');
+    }
+    for (const [el, saved] of droppedBackdrops) {
+      if (unseenOverPicture(el, r, px)) continue;
+      restoreInline(el, 'backdrop-filter', saved);
+      droppedBackdrops.delete(el);
+      if (el.isConnected) backdropCandidates.push(el); // a drawer slides out again
+    }
+  }
+  function restoreOverlayBlockers() {
+    for (const [v, saved] of hiddenStrayVideos) restoreInline(v, 'visibility', saved);
+    for (const [el, saved] of droppedBackdrops) restoreInline(el, 'backdrop-filter', saved);
+    hiddenStrayVideos.clear();
+    droppedBackdrops.clear();
+    backdropCandidates = [];
+    backdropScanAt = 0;
+  }
+  setInterval(() => {
+    if (running && sys.rtxOn && videoEl?.isConnected) clearOverlayBlockers();
+    else if (hiddenStrayVideos.size || droppedBackdrops.size) restoreOverlayBlockers();
+  }, 250);
   // after present()'s submit: the canvas' current texture is the finished frame
   function pushRtxFrame() {
     if (!rtxGen) openRtxStream();
@@ -2576,7 +2692,10 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     view.style.visibility = supported && canvasActive ? 'visible' : 'hidden';
     syncHdrAnchor(r, supported && canvasActive && running && sys.hdrOn);
     view.style.pointerEvents = supported && canvasActive && videoEl.controls ? 'auto' : 'none';
-    if (!supported || !canvasActive) return;
+    if (!supported || !canvasActive) {
+      veilSource(false);
+      return;
+    }
     const [capW, capH] = canvasCap(videoEl.videoWidth, videoEl.videoHeight);
     // RTX Video: never stretch past the source - VSR only engages on upscaling and
     // does it far better than our bilinear canvas resize
@@ -2721,7 +2840,10 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       view.style.transition = ''; // back to the stylesheet fade (onSrcChange kills it)
       view.style.visibility = 'visible';
       view.style.opacity = '1'; // reveal only once pixels exist
+      viewRevealedAt = performance.now();
     }
+    // only after the .25s fade-in and once our <video> shows a frame, or the picture dips
+    if (sys.rtxOn && rtxVideo.readyState >= 2 && performance.now() - viewRevealedAt > 300) veilSource(true);
     const now = performance.now();
     fpsWin.push(now);
     while (fpsWin.length && fpsWin[0] < now - 1000) fpsWin.shift();
@@ -4118,6 +4240,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       view.style.visibility = 'hidden';
       view.style.pointerEvents = 'none';
     }
+    veilSource(false);
   }
   function onPlaybackRateChange() {
     resetAutoController();
@@ -4135,6 +4258,7 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
   let srcWatchEl = null;
   async function start(v) {
     if (running && videoEl === v) return; // re-entry insurance: never double-arm the rVFC/rAF loops
+    veilSource(false);
     running = false;
     const startEpoch = invalidatePlaybackLoops();
     nativeHdrSource = undefined;
@@ -4223,6 +4347,8 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
     }
   }
   function stop() {
+    veilSource(false);
+    restoreOverlayBlockers();
     running = false;
     nativePassthroughActive = false;
     diag.loopStops++;

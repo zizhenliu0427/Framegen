@@ -78,7 +78,11 @@ cross-origin iframe players):
 - RTX Video mode: presented frames leave the canvas as `VideoFrame`s through a
   `MediaStreamTrackGenerator` into a `<video>`, so NVIDIA RTX VSR and RTX HDR
   (which only touch video layers) enhance the interpolated output; the canvas
-  then renders at source resolution and TinySR/ITM step aside
+  then renders at source resolution and TinySR/ITM step aside. The driver only
+  sees a video Chromium promotes to a DirectComposition overlay - one per frame,
+  with no backdrop-filter quad above it - so the site's video goes transparent
+  under ours, and invisible blockers (1 px helper videos, backdrop-filter drawers
+  clipped out of view) are neutralised while the mode is on
 - just-in-time GPU scheduling: each mid is submitted one compute-time before
   its display slot; presentation delay is ~2 frame-times, not a whole batch
 - the dedup readback is pipelined (a GPU→CPU roundtrip never blocks the frame
