@@ -188,6 +188,18 @@ test('invisible overlay blockers are cleared while RTX Video is on, and handed b
   assert.match(functionSource('setRtxPresentation'), /if \(!on\) \{[^}]*restoreOverlayBlockers\(\);/);
 });
 
+test('the RTX Video page fix has its own switch, on by default', () => {
+  assert.match(content, /rtxVideo: 'auto', rtxUnblock: true,/);
+  assert.match(content, /cfg\.rtxUnblock = cfg\.rtxUnblock !== false;/);
+  assert.match(content, /if \(running && sys\.rtxOn && cfg\.rtxUnblock && videoEl\?\.isConnected\) clearOverlayBlockers\(\);\s*else if \(hiddenStrayVideos\.size \|\| droppedBackdrops\.size\) restoreOverlayBlockers\(\);/);
+  assert.match(content, /#fcRtxUnblock'\)\.onchange = event => \{\s*cfg\.rtxUnblock = event\.currentTarget\.checked; saveCfg\(\);\s*if \(!cfg\.rtxUnblock\) restoreOverlayBlockers\(\);/,
+    'switching it off hands everything back at once');
+  assert.match(functionSource('syncPanel'), /#fcRtxUnblock'\)\.checked = cfg\.rtxUnblock;/);
+  const rows = functionSource('syncConditionalRows');
+  assert.match(rows, /#fcRtxUnblock'\)\.closest\('\.fc-row'\)\.style\.display = sys\.rtxOk \? '' : 'none';/);
+  assert.match(rows, /setRowEnabled\(panel\.querySelector\('#fcRtxUnblock'\), rtx\);/, 'greyed out while RTX Video is off');
+});
+
 function fakeVideo(opacity = '', priority = '') {
   const props = new Map(opacity ? [['opacity', [opacity, priority]]] : []);
   return {

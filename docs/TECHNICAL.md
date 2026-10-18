@@ -82,7 +82,8 @@ cross-origin iframe players):
   sees a video Chromium promotes to a DirectComposition overlay - one per frame,
   with no backdrop-filter quad above it - so the site's video goes transparent
   under ours, and invisible blockers (1 px helper videos, backdrop-filter drawers
-  clipped out of view) are neutralised while the mode is on
+  clipped out of view) are neutralised while the mode is on (panel switch
+  "RTX Video page fix", on by default)
 - just-in-time GPU scheduling: each mid is submitted one compute-time before
   its display slot; presentation delay is ~2 frame-times, not a whole batch
 - the dedup readback is pipelined (a GPU→CPU roundtrip never blocks the frame

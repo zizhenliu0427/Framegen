@@ -38,7 +38,7 @@
   const MODELS = { v6: 'rt_tfact2', v7s: 'rt_v7s' };
   const FPS_LIMIT_STEPS = Profiles.FPS_LIMIT_PRESETS;
   const cfg = { factor: 'auto', targetFps: 120, fpsLimit: null, anime: true, debug: false, res: 480, hoverReveal: true, compare: false,
-    fg: true, sr: false, hdr: false, rtxVideo: 'auto', canvas4k: false, macHdrFix: true, fillDisplay: false, nativeHdr: 'original', nativeHdrGain: 1, autoSites: [], autoSmall: false, autoAds: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
+    fg: true, sr: false, hdr: false, rtxVideo: 'auto', rtxUnblock: true, canvas4k: false, macHdrFix: true, fillDisplay: false, nativeHdr: 'original', nativeHdrGain: 1, autoSites: [], autoSmall: false, autoAds: false, sharpness: 0, showFps: true, showWatermark: true, showWarnings: true, guard: true, model: 'v7s' };
   function sanitizeCfg() {
     const legacyTarget = cfg.factor === 'fps60' ? 60 : cfg.factor === 'fps120' ? 120 : null;
     cfg.factor = Cadence.sanitizeOutputRate(cfg.factor);
@@ -49,7 +49,7 @@
     if (![0, 1, 2, 3].includes(cfg.sharpness)) cfg.sharpness = 0;
     cfg.anime = !!cfg.anime; cfg.debug = !!cfg.debug;
     cfg.hoverReveal = !!cfg.hoverReveal; cfg.compare = !!cfg.compare;
-    cfg.fg = !!cfg.fg; cfg.sr = !!cfg.sr; cfg.hdr = !!cfg.hdr; cfg.rtxVideo = cfg.rtxVideo === 'off' ? 'off' : 'auto'; cfg.canvas4k = !!cfg.canvas4k; cfg.macHdrFix = cfg.macHdrFix !== false; cfg.fillDisplay = !!cfg.fillDisplay;
+    cfg.fg = !!cfg.fg; cfg.sr = !!cfg.sr; cfg.hdr = !!cfg.hdr; cfg.rtxVideo = cfg.rtxVideo === 'off' ? 'off' : 'auto'; cfg.rtxUnblock = cfg.rtxUnblock !== false; cfg.canvas4k = !!cfg.canvas4k; cfg.macHdrFix = cfg.macHdrFix !== false; cfg.fillDisplay = !!cfg.fillDisplay;
     if (!['off', 'original', 'fix', 'real'].includes(cfg.nativeHdr)) cfg.nativeHdr = 'original';
     if (![0.7, 0.85, 1, 1.2, 1.4].includes(Number(cfg.nativeHdrGain))) cfg.nativeHdrGain = 1;
     cfg.nativeHdrGain = Number(cfg.nativeHdrGain);
@@ -536,6 +536,7 @@
     panel.querySelector('#fcAutoAds').checked = cfg.autoAds;
     panel.querySelector('#fcSR').checked = cfg.sr;
     panel.querySelector('#fcRtx').checked = cfg.rtxVideo === 'auto';
+    panel.querySelector('#fcRtxUnblock').checked = cfg.rtxUnblock;
     panel.querySelector('#fc4K').checked = cfg.canvas4k;
     panel.querySelector('#fcFill').checked = cfg.fillDisplay;
     panel.querySelector('#fcMacHdr').checked = cfg.macHdrFix;
@@ -576,6 +577,8 @@
     // the row at all.
     const rtx = cfg.rtxVideo === 'auto' && sys.rtxOk;
     panel.querySelector('#fcRtx').closest('.fc-row').style.display = sys.rtxOk ? '' : 'none';
+    panel.querySelector('#fcRtxUnblock').closest('.fc-row').style.display = sys.rtxOk ? '' : 'none';
+    setRowEnabled(panel.querySelector('#fcRtxUnblock'), rtx);
     setRowEnabled(panel.querySelector('#fcSR'), !rtx);
     setRowEnabled(panel.querySelector('#fcHDR'), sys.hdrOk && !rtx);
     // auto-enable refinements only matter once this site is on the allowlist
@@ -2174,8 +2177,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // 1x1 px autoplay-unlock clip (DCLayerResult 8) - and a backdrop-filter quad over
   // the picture (11) - there an episode drawer parked just outside the overflow:hidden
   // player, whose compositor quad still overlapped the picture's edge. While RTX
-  // Video is on, tiny videos are hidden and a backdrop-filter clipped out of sight
-  // is dropped until it slides into view.
+  // Video is on (and the page fix, cfg.rtxUnblock, is), tiny videos are hidden and a
+  // backdrop-filter clipped out of sight is dropped until it slides into view.
   const hiddenStrayVideos = new Map(), droppedBackdrops = new Map(); // el -> saved inline value
   let backdropCandidates = [], backdropScanAt = 0;
   function saveInline(el, prop) {
@@ -2256,7 +2259,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     backdropScanAt = 0;
   }
   setInterval(() => {
-    if (running && sys.rtxOn && videoEl?.isConnected) clearOverlayBlockers();
+    if (running && sys.rtxOn && cfg.rtxUnblock && videoEl?.isConnected) clearOverlayBlockers();
     else if (hiddenStrayVideos.size || droppedBackdrops.size) restoreOverlayBlockers();
   }, 250);
   // after present()'s submit: the canvas' current texture is the finished frame
@@ -4533,6 +4536,8 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
         <input class="fc-sw" type="checkbox" id="fcHDR"></label>
       <label class="fc-row"><span>${t('panel_rtxVideo')}<small>${t('panel_rtxVideoHint')}</small></span>
         <input class="fc-sw" type="checkbox" id="fcRtx"></label>
+      <label class="fc-row"><span>${t('panel_rtxUnblock')}<small>${t('panel_rtxUnblockHint')}</small></span>
+        <input class="fc-sw" type="checkbox" id="fcRtxUnblock"></label>
       <div class="fc-row"><span>${t('panel_hdrVideo')}<small>${t('panel_hdrVideoHint')}</small></span>
         <select class="fc-sel" id="fcNativeHdr">
           <option value="original">${t('panel_showOriginal')}</option>
@@ -4644,6 +4649,10 @@ fn gentleHdr(lin: vec3<f32>) -> vec3<f32> {
       configureOverlay();
       syncConditionalRows();
       reconcilePresentationMode(previousNeedsCanvas, true);
+    };
+    panel.querySelector('#fcRtxUnblock').onchange = event => {
+      cfg.rtxUnblock = event.currentTarget.checked; saveCfg();
+      if (!cfg.rtxUnblock) restoreOverlayBlockers();
     };
     const Hd = panel.querySelector('#fcHDR');
     Hd.onchange = () => {
